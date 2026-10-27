@@ -12,15 +12,19 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('schedule_details', function (Blueprint $table) {
-        $table->id();
-        $table->foreignId('schedule_id')->constrained('schedules')->onDelete('cascade');
-        $table->enum('day_of_week', ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']);
-        $table->time('check_in_time');
-        $table->time('check_out_time');
-        $table->boolean('is_day_off')->default(false);
-        $table->boolean('is_active')->default(true);
-        $table->timestamps();
-});
+            $table->id();
+            $table->foreignId('schedule_id')->constrained('schedules')->onDelete('cascade');
+            $table->enum('day_of_week', ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']);
+            $table->time('check_in_time');
+            $table->time('check_out_time');
+            
+            // 🌟 Diubah menjadi string / text nullable untuk keperluan Annual Event
+           // 🌟 Mengganti boolean is_day_off menjadi string nullable untuk event tahunan (default null)
+            $table->string('annual_event_name')->nullable()->default(null);
+            
+            $table->boolean('is_active')->default(true);
+            $table->timestamps();
+        });
     }
 
     /**

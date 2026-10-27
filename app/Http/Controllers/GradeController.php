@@ -9,7 +9,7 @@ class GradeController extends Controller
 {
     public function index()
     {
-        $grades = Grade::latest()->get();
+        $grades = Grade::orderBy('level', 'desc')->get();
         return response()->json([
             'success' => true,
             'data'    => $grades
@@ -21,6 +21,7 @@ class GradeController extends Controller
         $validated = $request->validate([
             'code'      => 'required|string|unique:grades,code',
             'name'      => 'required|string|max:255',
+            'level'     => 'required|integer|min:1',
             'is_active' => 'boolean',
         ]);
 
@@ -49,6 +50,7 @@ class GradeController extends Controller
         $validated = $request->validate([
             'code'      => 'required|string|unique:grades,code,' . $grade->id,
             'name'      => 'required|string|max:255',
+            'level'     => 'required|integer|min:1',
             'is_active' => 'boolean',
         ]);
 

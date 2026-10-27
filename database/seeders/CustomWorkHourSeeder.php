@@ -7,40 +7,36 @@ use App\Models\CustomWorkHour;
 
 class CustomWorkHourSeeder extends Seeder
 {
-    /**
-     * Run the database seeds.
-     */
     public function run(): void
     {
         $customWorkHours = [
             [
-                'name' => 'Jam Kerja Shift Pagi',
-                'clock_in' => '08:00:00',
-                'clock_out' => '17:00:00',
-                'tolerance' => '00:15:00',
-                'description' => 'Jam kerja normal reguler',
-                'is_active' => true,
+                'code'        => 'CUS001',
+                'start_date'  => '2026-12-15',
+                'end_date'    => '2027-01-15',
+                'work_scheme' => '5-2',
+                'clock_in'    => '12:00:00',
+                'tolerance'   => '00:05:00',
+                'description' => 'Peak Season',
+                'is_active'   => true,
             ],
             [
-                'name' => 'Jam Kerja Shift Malam',
-                'clock_in' => '20:00:00',
-                'clock_out' => '04:00:00',
-                'tolerance' => '00:15:00',
-                'description' => 'Jam kerja khusus divisi operasional malam',
-                'is_active' => true,
-            ],
-            [
-                'name' => 'Jam Kerja Bulan Ramadhan',
-                'clock_in' => '08:30:00',
-                'clock_out' => '15:30:00',
-                'tolerance' => '00:15:00',
-                'description' => 'Jam kerja penyesuaian khusus bulan puasa',
-                'is_active' => false,
+                'code'        => 'CUS002',
+                'start_date'  => '2026-03-01',
+                'end_date'    => '2026-03-31',
+                'work_scheme' => '6-1',
+                'clock_in'    => '08:30:00',
+                'tolerance'   => '00:15:00',
+                'description' => 'Penyesuaian Bulan Ramadhan',
+                'is_active'   => false,
             ],
         ];
 
         foreach ($customWorkHours as $workHour) {
-            CustomWorkHour::create($workHour);
+            CustomWorkHour::updateOrCreate(
+                ['code' => $workHour['code']],
+                $workHour
+            );
         }
     }
 }

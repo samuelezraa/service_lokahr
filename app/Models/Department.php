@@ -20,4 +20,12 @@ class Department extends Model
         // Parameter 3: local key di tabel departments (code)
         return $this->hasMany(SubDepartment::class, 'department_code', 'code');
     }
+
+    /**
+     * Relasi ke Employee
+     */
+    public function employees()
+    {
+        return $this->hasMany(Employee::class, 'department_id');
+    }
 }

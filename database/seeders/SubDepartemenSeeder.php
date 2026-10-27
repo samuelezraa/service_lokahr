@@ -12,11 +12,11 @@ class SubDepartemenSeeder extends Seeder
      */
     public function run(): void
     {
-        // Pastikan nama tabel disesuaikan dengan migrasi backend kamu (sub_departments)
-        DB::table('sub_departments')->insert([
+        // Menggunakan upsert agar aman dari error duplikasi jika seed dijalankan ulang
+        DB::table('sub_departments')->upsert([
             [
                 'code'            => 'SUB001',
-                'department_code' => 'DP001', // Sesuaikan dengan 'code' departemen yang ada di DepartemenSeeder
+                'department_code' => 'DP001', 
                 'name'            => 'Frontend Engineering',
                 'is_active'       => true,
                 'created_at'      => now(),
@@ -46,6 +46,6 @@ class SubDepartemenSeeder extends Seeder
                 'created_at'      => now(),
                 'updated_at'      => now(),
             ],
-        ]);
+        ], ['code'], ['department_code', 'name', 'is_active', 'updated_at']);
     }
 }

@@ -10,10 +10,12 @@ return new class extends Migration
     {
         Schema::create('custom_work_hours', function (Blueprint $table) {
             $table->id();
-            $table->string('name');
+            $table->string('code')->unique(); // ID otomatis (misal: CUS001)
+            $table->date('start_date');
+            $table->date('end_date');
+            $table->string('work_scheme'); // Skema Hari Kerja (misal: 5-2)
             $table->time('clock_in');
-            $table->time('clock_out');
-            $table->time('tolerance')->default('00:00:00');
+            $table->time('tolerance')->default('00:05:00');
             $table->text('description')->nullable();
             $table->boolean('is_active')->default(true);
             $table->timestamps();

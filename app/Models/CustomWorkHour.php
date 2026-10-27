@@ -9,16 +9,20 @@ class CustomWorkHour extends Model
 {
     use HasFactory;
 
-   protected $fillable = [
-    'name',
-    'clock_in',
-    'clock_out',
-    'tolerance', // 👈 Tambahkan ini
-    'description',
-    'is_active',
-];
+    protected $fillable = [
+        'code',
+        'start_date',
+        'end_date',
+        'work_scheme',
+        'clock_in',
+        'tolerance',
+        'description',
+        'is_active',
+    ];
 
     protected $casts = [
-        'is_active' => 'boolean',
+        'start_date' => 'date:Y-m-d',
+        'end_date'   => 'date:Y-m-d',
+        'is_active'  => 'boolean',
     ];
 }

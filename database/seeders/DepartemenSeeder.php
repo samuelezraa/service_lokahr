@@ -12,7 +12,8 @@ class DepartemenSeeder extends Seeder
      */
     public function run(): void
     {
-        DB::table('departments')->insert([
+        // Menggunakan upsert agar aman jika data sudah ada (tidak duplikat/error)
+        DB::table('departments')->upsert([
             [
                 'code'       => 'DP001',
                 'name'       => 'IT',
@@ -34,6 +35,6 @@ class DepartemenSeeder extends Seeder
                 'created_at' => now(),
                 'updated_at' => now(),
             ],
-        ]);
+        ], ['code'], ['name', 'is_active', 'updated_at']);
     }
 }

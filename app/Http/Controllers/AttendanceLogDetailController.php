@@ -9,9 +9,15 @@ class AttendanceLogDetailController extends Controller
 {
     public function index()
     {
-        $details = AttendanceLogDetail::with(['attendanceLog', 'department'])
-            ->latest('attendance_time')
-            ->get();
+        $details = AttendanceLogDetail::with([
+            'attendanceLog',
+            'department',
+            'employee.subDepartment',
+            'employee.position',
+            'employee.grade'
+        ])
+        ->latest('attendance_time')
+        ->get();
 
         return response()->json([
             'success' => true,
@@ -23,13 +29,13 @@ class AttendanceLogDetailController extends Controller
     {
         $validated = $request->validate([
             'attendance_log_id' => 'nullable|exists:attendance_logs,id',
-            'date' => 'required|date',
-            'nik' => 'required|string',
-            'department_id' => 'nullable|exists:departments,id',
-            'department_name' => 'required|string',
-            'employee_name' => 'required|string',
-            'attendance_time' => 'required|date',
-            'attendance_type' => 'required|string',
+            'date'              => 'required|date',
+            'nik'               => 'required|string',
+            'department_id'     => 'nullable|exists:departments,id',
+            'department_name'   => 'required|string',
+            'employee_name'     => 'required|string',
+            'attendance_time'   => 'required|date',
+            'attendance_type'   => 'required|string',
         ]);
 
         $detail = AttendanceLogDetail::create($validated);
@@ -37,16 +43,23 @@ class AttendanceLogDetailController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Attendance log detail created successfully',
-            'data' => $detail
+            'data'    => $detail
         ], 201);
     }
 
     public function show($id)
     {
-        $detail = AttendanceLogDetail::with(['attendanceLog', 'department'])->findOrFail($id);
+        $detail = AttendanceLogDetail::with([
+            'attendanceLog',
+            'department',
+            'employee.subDepartment',
+            'employee.position',
+            'employee.grade'
+        ])->findOrFail($id);
+
         return response()->json([
             'success' => true,
-            'data' => $detail
+            'data'    => $detail
         ]);
     }
 

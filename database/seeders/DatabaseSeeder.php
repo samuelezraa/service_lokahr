@@ -21,6 +21,9 @@ class DatabaseSeeder extends Seeder
             EmployeeSeeder::class,      
             CustomWorkHourSeeder::class,  
             ScheduleSeeder::class,
+            AttendanceLogDetailSeeder::class,
+            PeriodSeeder::class,
+            EmployeeAttendanceSeeder::class,
         ]);
     }
 }

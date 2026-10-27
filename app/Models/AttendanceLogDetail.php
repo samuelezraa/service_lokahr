@@ -34,4 +34,11 @@ class AttendanceLogDetail extends Model
     {
         return $this->belongsTo(Department::class);
     }
+
+
+    // Tambahkan relasi ke model Employee berdasarkan NIK
+    public function employee()
+    {
+        return $this->belongsTo(Employee::class, 'nik', 'nik')->with(['subDepartment', 'grade', 'position']);
+    }
 }

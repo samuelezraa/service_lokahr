@@ -14,12 +14,11 @@ class ScheduleDetail extends Model
         'day_of_week',
         'check_in_time',
         'check_out_time',
-        'is_day_off',
+        'annual_event_name', // 👈 Pastikan ini annual_event_name, bukan is_day_off
         'is_active',
     ];
 
     protected $casts = [
-        'is_day_off' => 'boolean',
         'is_active' => 'boolean',
     ];
 
