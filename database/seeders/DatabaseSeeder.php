@@ -24,6 +24,7 @@ class DatabaseSeeder extends Seeder
             AttendanceLogDetailSeeder::class,
             PeriodSeeder::class,
             EmployeeAttendanceSeeder::class,
+             UserSeeder::class,
         ]);
     }
 }

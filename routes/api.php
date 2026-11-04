@@ -23,6 +23,10 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\LogHistoryController;
 
 
+use App\Http\Controllers\AuthController;
+
+Route::post('/login', [AuthController::class, 'login']);
+
 Route::get('/dashboard/stats', [DashboardController::class, 'getStats']);
 
 // Master Data Routes
@@ -62,6 +66,7 @@ Route::post('/schedule/jadwalku/export', [InputScheduleController::class, 'expor
 Route::get('/reports/employee-presence', [EmployeePresenceReportController::class, 'index']);
 
 Route::apiResource('employee-attendances', EmployeeAttendanceController::class);
+
 
 
 
