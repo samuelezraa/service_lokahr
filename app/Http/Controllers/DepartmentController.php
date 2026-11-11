@@ -7,12 +7,42 @@ use Illuminate\Http\Request;
 
 class DepartmentController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $departments = Department::with('subDepartments')->latest()->get();
+        $query = Department::with('subDepartments');
+
+        // Tangkap parameter pencarian (berdasarkan nama atau kode)
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('code', 'like', "%{$search}%");
+            });
+        }
+
+        // Tangkap parameter filter status
+        if ($request->has('status') && $request->status !== '') {
+            $status = filter_var($request->status, FILTER_VALIDATE_BOOLEAN);
+            $query->where('is_active', $status);
+        }
+
+        // Ambil parameter per_page dari request (default 10 atau 25)
+        $perPage = $request->input('per_page', 10);
+
+        // Gunakan paginate() alih-alih get()
+        $departments = $query->latest()->paginate($perPage);
+
         return response()->json([
             'success' => true,
-            'data' => $departments
+            'data' => $departments->items(),
+            'meta' => [
+                'current_page' => $departments->currentPage(),
+                'from' => $departments->firstItem(),
+                'last_page' => $departments->lastPage(),
+                'per_page' => $departments->perPage(),
+                'to' => $departments->lastItem(),
+                'total' => $departments->total(),
+            ]
         ]);
     }
 

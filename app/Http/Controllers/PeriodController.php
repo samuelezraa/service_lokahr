@@ -4,33 +4,63 @@ namespace App\Http\Controllers;
 
 use App\Models\Period;
 use Illuminate\Http\Request;
+use Carbon\Carbon;
 
 class PeriodController extends Controller
 {
-    public function index()
+    /**
+     * GET /api/periods
+     * Mendukung Search & Server-Side Pagination
+     */
+    public function index(Request $request)
     {
-        $periods = Period::latest('start_date')->get();
+        $query = Period::latest('start_date');
 
-        $data = $periods->map(function ($p) {
+        // 1. Filter Search (berdasarkan nama periode atau kode)
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('code', 'like', "%{$search}%");
+            });
+        }
+
+        // 2. Server-Side Pagination
+        $perPage = (int) $request->input('per_page', 10);
+        $paginated = $query->paginate($perPage);
+
+        // 3. Map Response (Format Tanggal: d-m-Y -> DD-MM-YYYY)
+        $mappedItems = collect($paginated->items())->map(function ($p) {
             return [
                 'id'            => $p->id,
                 'idPeriode'     => $p->code ?? sprintf('22%04d', $p->id),
                 'periode'       => $p->name,
-                'tanggalAwal'   => $p->start_date ? \Carbon\Carbon::parse($p->start_date)->format('Y-m-d') : '-',
-                'tanggalAkhir'  => $p->end_date ? \Carbon\Carbon::parse($p->end_date)->format('Y-m-d') : '-',
+                'tanggalAwal'   => $p->start_date ? Carbon::parse($p->start_date)->format('d-m-Y') : '-',
+                'tanggalAkhir'  => $p->end_date ? Carbon::parse($p->end_date)->format('d-m-Y') : '-',
                 'lateTolerance' => $p->late_tolerance ?? '00:15:00',
                 'keterangan'    => $p->description ?? 'Generate Successfully',
-                'isClosed'      => $p->is_closed,
-                'isActive'      => $p->is_active,
+                'isClosed'      => (bool) $p->is_closed,
+                'isActive'      => (bool) $p->is_active,
             ];
         });
 
         return response()->json([
             'success' => true,
-            'data'    => $data,
+            'data'    => $mappedItems,
+            'meta'    => [
+                'current_page' => $paginated->currentPage(),
+                'from'         => $paginated->firstItem(),
+                'last_page'    => $paginated->lastPage(),
+                'per_page'     => $paginated->perPage(),
+                'to'           => $paginated->lastItem(),
+                'total'        => $paginated->total(),
+            ]
         ]);
     }
 
+    /**
+     * POST /api/periods
+     */
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -43,7 +73,6 @@ class PeriodController extends Controller
             'is_active'      => 'boolean',
         ]);
 
-        // Auto-generate kode periode jika tidak diinput
         $lastId = Period::max('id') ?? 0;
         $validated['code'] = sprintf('22%04d', $lastId + 1);
 
@@ -60,17 +89,16 @@ class PeriodController extends Controller
                 'id'            => $period->id,
                 'idPeriode'     => $period->code,
                 'periode'       => $period->name,
-                'tanggalAwal'   => \Carbon\Carbon::parse($period->start_date)->format('Y-m-d'),
-                'tanggalAkhir'  => \Carbon\Carbon::parse($period->end_date)->format('Y-m-d'),
+                'tanggalAwal'   => Carbon::parse($period->start_date)->format('d-m-Y'),
+                'tanggalAkhir'  => Carbon::parse($period->end_date)->format('d-m-Y'),
                 'lateTolerance' => $period->late_tolerance,
                 'keterangan'    => $period->description,
-                'isClosed'      => $period->is_closed,
-                'isActive'      => $period->is_active,
+                'isClosed'      => (bool) $period->is_closed,
+                'isActive'      => (bool) $period->is_active,
             ],
         ], 201);
     }
 
-    
     public function show($id)
     {
         $period = Period::findOrFail($id);

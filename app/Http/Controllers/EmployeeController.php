@@ -3,35 +3,81 @@
 namespace App\Http\Controllers;
 
 use App\Models\Employee;
+use App\Jobs\CalculateEmployeeMetricsJob;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 
+use App\Exports\EmployeeExport;
+use App\Imports\EmployeeImport;
+use App\Exports\EmployeeSampleExport;
+use Maatwebsite\Excel\Facades\Excel; 
 class EmployeeController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $employees = Employee::with([
+        $query = Employee::with([
             'department', 
             'subDepartment', 
             'position', 
             'grade', 
             'workScheduleScheme'
-        ])
-        ->latest()
-        ->get();
+        ]);
+
+        // 1. Search Global (NIP, Nama, Email, Telepon, Employee ID)
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('full_name', 'like', "%{$search}%")
+                  ->orWhere('nip', 'like', "%{$search}%")
+                  ->orWhere('employee_id', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%")
+                  ->orWhere('phone', 'like', "%{$search}%");
+            });
+        }
+
+        // 2. Filter Berdasarkan Relasi Master Data
+        if ($request->has('department_id') && !empty($request->department_id)) {
+            $query->where('department_id', $request->department_id);
+        }
+        if ($request->has('sub_department_id') && !empty($request->sub_department_id)) {
+            $query->where('sub_department_id', $request->sub_department_id);
+        }
+        if ($request->has('position_id') && !empty($request->position_id)) {
+            $query->where('position_id', $request->position_id);
+        }
+        if ($request->has('grade_id') && !empty($request->grade_id)) {
+            $query->where('grade_id', $request->grade_id);
+        }
+        if ($request->has('status') && $request->status !== '') {
+            $status = filter_var($request->status, FILTER_VALIDATE_BOOLEAN);
+            $query->where('is_active', $status);
+        }
+
+        $perPage = $request->input('per_page', 10);
+        $employees = $query->latest()->paginate($perPage);
 
         return response()->json([
             'success' => true,
-            'data' => $employees
+            'data'    => $employees->items(),
+            'meta'    => [
+                'current_page' => $employees->currentPage(),
+                'from'         => $employees->firstItem(),
+                'last_page'    => $employees->lastPage(),
+                'per_page'     => $employees->perPage(),
+                'to'           => $employees->lastItem(),
+                'total'        => $employees->total(),
+            ]
         ]);
     }
 
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'nik'                     => 'required|string|unique:employees,nik',
+            'employee_id'             => 'nullable|string|unique:employees,employee_id',
+            'nip'                     => 'required|string|unique:employees,nip',
             'full_name'               => 'required|string|max:255',
             'email'                   => 'nullable|email|max:255',
-            'phone'                   => 'nullable|string|max:20',
+            'phone'                   => 'nullable|string|max:14',
             'department_id'           => 'nullable|exists:departments,id',
             'sub_department_id'       => 'nullable|exists:sub_departments,id',
             'position_id'             => 'nullable|exists:positions,id',
@@ -42,7 +88,18 @@ class EmployeeController extends Controller
             'is_active'               => 'boolean',
         ]);
 
+        // Terapkan fungsi konversi nomor telepon
+        if (isset($validated['phone'])) {
+            $validated['phone'] = Employee::phoneconvert($validated['phone']);
+        }
+
+        // Set default password adalah NIP
+        $validated['employee_password'] = Hash::make($validated['nip']);
+
         $employee = Employee::create($validated);
+
+        // Jalankan Job kalkulasi umur & masa kerja
+        CalculateEmployeeMetricsJob::dispatch();
 
         return response()->json([
             'success' => true,
@@ -78,10 +135,11 @@ class EmployeeController extends Controller
         $employee = Employee::findOrFail($id);
 
         $validated = $request->validate([
-            'nik'                     => 'required|string|unique:employees,nik,' . $id,
+            'employee_id'             => 'nullable|string|unique:employees,employee_id,' . $id,
+            'nip'                     => 'required|string|unique:employees,nip,' . $id,
             'full_name'               => 'required|string|max:255',
             'email'                   => 'nullable|email|max:255',
-            'phone'                   => 'nullable|string|max:20',
+            'phone'                   => 'nullable|string|max:14',
             'department_id'           => 'nullable|exists:departments,id',
             'sub_department_id'       => 'nullable|exists:sub_departments,id',
             'position_id'             => 'nullable|exists:positions,id',
@@ -92,7 +150,20 @@ class EmployeeController extends Controller
             'is_active'               => 'boolean',
         ]);
 
+        // Terapkan fungsi konversi nomor telepon jika diubah
+        if (isset($validated['phone'])) {
+            $validated['phone'] = Employee::phoneconvert($validated['phone']);
+        }
+
+        // Jika NIP berubah, update juga default password jika diperlukan
+        if (isset($validated['nip']) && $validated['nip'] !== $employee->nip) {
+            $validated['employee_password'] = Hash::make($validated['nip']);
+        }
+
         $employee->update($validated);
+
+        // Jalankan Job kalkulasi ulang umur & masa kerja
+        CalculateEmployeeMetricsJob::dispatch();
 
         return response()->json([
             'success' => true,
@@ -118,58 +189,33 @@ class EmployeeController extends Controller
         ]);
     }
 
-   public function export()
+  public function export(Request $request)
     {
-        $fileName = 'data-karyawan-' . date('Y-m-d') . '.csv';
-        
-        $employees = Employee::with([
-            'department', 
-            'subDepartment', 
-            'position', 
-            'grade', 
-            'workScheduleScheme'
-        ])->get();
+        $idsParam = $request->input('ids');
+        $selectedIds = !empty($idsParam) ? explode(',', $idsParam) : [];
 
-        $headers = [
-            "Content-type"        => "text/csv",
-            "Content-Disposition" => "attachment; filename=$fileName",
-            "Pragma"              => "no-cache",
-            "Cache-Control"       => "must-revalidate, post-check=0, pre-check=0",
-            "Expires"             => "0"
-        ];
+        return Excel::download(new EmployeeExport($selectedIds), 'data-karyawan-' . date('Y-m-d') . '.xlsx');
+    }
 
-        $columns = [
-            'NIK', 'Nama Lengkap', 'Email', 'Telepon', 
-            'Departemen', 'Sub Departemen', 'POS', 'Grade', 
-            'Skema Hari Kerja', 'Tanggal Bergabung', 'Tanggal Lahir', 'Status'
-        ];
+    public function import(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|mimes:xlsx,xls,csv|max:5120', // Maksimal 5MB
+        ]);
 
-        $callback = function() use($employees, $columns) {
-            $file = fopen('php://output', 'w');
-            fputcsv($file, $columns);
+        try {
+            Excel::import(new EmployeeImport, $request->file('file'));
 
-            foreach ($employees as $emp) {
-                fputcsv($file, [
-                    $emp->nik,
-                    $emp->full_name,
-                    $emp->email,
-                    $emp->phone,
-                    $emp->department?->name,
-                    $emp->subDepartment?->name,
-                    $emp->position?->title ?? $emp->position?->name,
-                    $emp->grade?->name,
-                    $emp->workScheduleScheme?->name,
-                    // Diubah agar aman dari error string format
-                    $emp->join_date ? date('Y-m-d', strtotime($emp->join_date)) : '',
-                    $emp->birth_date ? date('Y-m-d', strtotime($emp->birth_date)) : '',
-                    $emp->is_active ? 'Aktif' : 'Non Aktif',
-                ]);
-            }
-
-            fclose($file);
-        };
-
-        return response()->stream($callback, 200, $headers);
+            return response()->json([
+                'success' => true,
+                'message' => 'Data karyawan berhasil diimpor dan dikalkulasi ulang!'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengimpor file: ' . $e->getMessage()
+            ], 422);
+        }
     }
 
     public function bulkStatus(Request $request)
@@ -179,7 +225,6 @@ class EmployeeController extends Controller
             'ids.*' => 'exists:employees,id',
         ]);
 
-        // Ambil data karyawan yang dipilih lalu toggle status is_active-nya
         $employees = Employee::whereIn('id', $validated['ids'])->get();
 
         foreach ($employees as $employee) {
@@ -193,4 +238,33 @@ class EmployeeController extends Controller
             'message' => 'Status karyawan berhasil diperbarui secara massal.'
         ]);
     }
+
+
+    public function bulkResetPassword(Request $request)
+        {
+            $validated = $request->validate([
+                'ids'   => 'required|array',
+                'ids.*' => 'exists:employees,id',
+            ]);
+
+            $employees = Employee::whereIn('id', $validated['ids'])->get();
+
+            foreach ($employees as $employee) {
+                $employee->update([
+                    'employee_password' => Hash::make((string) $employee->nip)
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Password karyawan berhasil di-reset ke NIP masing-masing.'
+            ]);
+        }
+
+
+    public function downloadSample()
+    {
+        return Excel::download(new EmployeeSampleExport, 'template-import-karyawan.xlsx');
+    }
 }
+

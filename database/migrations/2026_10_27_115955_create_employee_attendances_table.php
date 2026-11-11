@@ -10,6 +10,7 @@ return new class extends Migration
     {
         Schema::create('employee_attendances', function (Blueprint $table) {
             $table->id();
+            $table->string('employee_id')->nullable();
             $table->string('period_code');              // e.g. "2026-10"
             $table->string('nip');                      // e.g. "99-9999-99"
             $table->string('employee_name');            // Direct column

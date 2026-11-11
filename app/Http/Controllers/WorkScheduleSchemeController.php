@@ -7,12 +7,40 @@ use Illuminate\Http\Request;
 
 class WorkScheduleSchemeController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $schemes = WorkScheduleScheme::latest()->get();
+        $query = WorkScheduleScheme::query();
+
+        // 1. Filter Pencarian (berdasarkan name atau code)
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('code', 'like', "%{$search}%");
+            });
+        }
+
+        // 2. Filter Status Aktif / Non Aktif
+        if ($request->has('status') && $request->status !== '') {
+            $status = filter_var($request->status, FILTER_VALIDATE_BOOLEAN);
+            $query->where('is_active', $status);
+        }
+
+        // 3. Server-side Pagination
+        $perPage = $request->input('per_page', 10);
+        $schemes = $query->latest()->paginate($perPage);
+
         return response()->json([
             'success' => true,
-            'data' => $schemes
+            'data'    => $schemes->items(),
+            'meta'    => [
+                'current_page' => $schemes->currentPage(),
+                'from'         => $schemes->firstItem(),
+                'last_page'    => $schemes->lastPage(),
+                'per_page'     => $schemes->perPage(),
+                'to'           => $schemes->lastItem(),
+                'total'        => $schemes->total(),
+            ]
         ]);
     }
 
@@ -36,7 +64,6 @@ class WorkScheduleSchemeController extends Controller
 
     public function show($id)
     {
-        // Mendukung pencarian berdasarkan ID angka ataupun Code string
         $scheme = is_numeric($id) 
             ? WorkScheduleScheme::findOrFail($id) 
             : WorkScheduleScheme::where('code', $id)->firstOrFail();
@@ -49,7 +76,6 @@ class WorkScheduleSchemeController extends Controller
 
     public function update(Request $request, $id)
     {
-        // Mencari data berdasarkan ID angka atau Code string
         $scheme = is_numeric($id) 
             ? WorkScheduleScheme::findOrFail($id) 
             : WorkScheduleScheme::where('code', $id)->firstOrFail();

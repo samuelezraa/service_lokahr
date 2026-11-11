@@ -7,12 +7,44 @@ use Illuminate\Http\Request;
 
 class SubDepartmentController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $subDepartments = SubDepartment::with('department')->latest()->get();
+        $query = SubDepartment::with('department');
+
+        // Filter Pencarian (nama atau kode sub departemen)
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('code', 'like', "%{$search}%");
+            });
+        }
+
+        // Filter Departemen Induk
+        if ($request->has('department_code') && !empty($request->department_code)) {
+            $query->where('department_code', $request->department_code);
+        }
+
+        // Filter Status Aktif/Non Aktif
+        if ($request->has('status') && $request->status !== '') {
+            $status = filter_var($request->status, FILTER_VALIDATE_BOOLEAN);
+            $query->where('is_active', $status);
+        }
+
+        $perPage = $request->input('per_page', 10);
+        $subDepartments = $query->latest()->paginate($perPage);
+
         return response()->json([
             'success' => true,
-            'data'    => $subDepartments
+            'data'    => $subDepartments->items(),
+            'meta'    => [
+                'current_page' => $subDepartments->currentPage(),
+                'from'         => $subDepartments->firstItem(),
+                'last_page'    => $subDepartments->lastPage(),
+                'per_page'     => $subDepartments->perPage(),
+                'to'           => $subDepartments->lastItem(),
+                'total'        => $subDepartments->total(),
+            ]
         ]);
     }
 

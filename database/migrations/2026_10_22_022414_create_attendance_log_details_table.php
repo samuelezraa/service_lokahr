@@ -15,12 +15,12 @@ return new class extends Migration
         $table->id();
         $table->foreignId('attendance_log_id')->nullable()->constrained('attendance_logs')->onDelete('cascade');
         $table->date('date');
-        $table->string('nik');
+        $table->string('nip');
         $table->foreignId('department_id')->nullable()->constrained('departments')->nullOnDelete();
         $table->string('department_name');
         $table->string('employee_name');
         $table->dateTime('attendance_time');
-        $table->string('attendance_type'); // in / out / break_in / break_out
+        $table->string('attendance_type'); // wajah / inputan / kartu / 
         $table->timestamps();
     });
     }

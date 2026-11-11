@@ -24,6 +24,7 @@ class AuthController extends Controller
                     ->first();
 
         // Verifikasi user dan password
+       // Verifikasi user dan password
         if (! $user || ! Hash::check($request->password, $user->password)) {
             return response()->json([
                 'success' => false,
@@ -31,15 +32,15 @@ class AuthController extends Controller
             ], 401);
         }
 
-        // Jika menggunakan Laravel Sanctum / Token (Opsional, atau buat token sederhana)
-        // $token = $user->createToken('auth_token')->plainTextToken;
+        // 🟢 Aktifkan pembuatan token Sanctum di sini
+        $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
             'success' => true,
             'message' => 'Login berhasil',
             'data'    => [
                 'user'  => $user,
-                // 'token' => $token, // Aktifkan jika menggunakan Sanctum
+                'token' => $token, // 🟢 Sertakan token ke dalam response JSON
             ]
         ]);
     }

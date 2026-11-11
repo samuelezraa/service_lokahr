@@ -8,7 +8,9 @@ use App\Models\SubDepartment;
 use App\Models\Position;
 use App\Models\Grade;
 use App\Models\WorkScheduleScheme;
+use App\Jobs\CalculateEmployeeMetricsJob;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Hash;
 
 class EmployeeSeeder extends Seeder
 {
@@ -33,10 +35,12 @@ class EmployeeSeeder extends Seeder
 
         $employees = [
             [
-                'nik'                     => '1001',
+                'employee_id'             => 'EMP-001',
+                'nip'                     => '1001',
+                'employee_password'       => Hash::make('1001'),
                 'full_name'               => 'Antika Lorien',
                 'email'                   => 'antika@lokahr.com',
-                'phone'                   => '081234567890',
+                'phone'                   => Employee::phoneconvert('081234567890'),
                 'department_id'           => $itDept?->id,
                 'sub_department_id'       => $subApp?->id,
                 'position_id'             => $posProgrammer?->id,
@@ -47,10 +51,12 @@ class EmployeeSeeder extends Seeder
                 'is_active'               => true,
             ],
             [
-                'nik'                     => '1002',
+                'employee_id'             => 'EMP-002',
+                'nip'                     => '1002',
+                'employee_password'       => Hash::make('1002'),
                 'full_name'               => 'Budi Pratama',
                 'email'                   => 'budi@lokahr.com',
-                'phone'                   => '081298765432',
+                'phone'                   => Employee::phoneconvert('081298765432'),
                 'department_id'           => $itDept?->id,
                 'sub_department_id'       => $subInfra?->id,
                 'position_id'             => $posNetwork?->id,
@@ -61,10 +67,12 @@ class EmployeeSeeder extends Seeder
                 'is_active'               => true,
             ],
             [
-                'nik'                     => '1003',
+                'employee_id'             => 'EMP-003',
+                'nip'                     => '1003',
+                'employee_password'       => Hash::make('1003'),
                 'full_name'               => 'Citra Dewi',
                 'email'                   => 'citra@lokahr.com',
-                'phone'                   => '081311223344',
+                'phone'                   => Employee::phoneconvert('081311223344'),
                 'department_id'           => $hrDept?->id,
                 'sub_department_id'       => $subRecruit?->id,
                 'position_id'             => $posRecruit?->id,
@@ -74,84 +82,16 @@ class EmployeeSeeder extends Seeder
                 'birth_date'              => '2000-05-12',
                 'is_active'               => false,
             ],
-            // Data Tambahan Baru
-            [
-                'nik'                     => '1004',
-                'full_name'               => 'Deni Setiawan',
-                'email'                   => 'deni@lokahr.com',
-                'phone'                   => '081344556677',
-                'department_id'           => $itDept?->id,
-                'sub_department_id'       => $subApp?->id,
-                'position_id'             => $posProgrammer?->id,
-                'grade_id'                => $gradeOfficer?->id,
-                'work_schedule_scheme_id' => $scheme52?->id,
-                'join_date'               => '2025-02-01',
-                'birth_date'              => '1998-11-04',
-                'is_active'               => true,
-            ],
-            [
-                'nik'                     => '1005',
-                'full_name'               => 'Eka Rahmawati',
-                'email'                   => 'eka@lokahr.com',
-                'phone'                   => '081355667788',
-                'department_id'           => $hrDept?->id,
-                'sub_department_id'       => $subRecruit?->id,
-                'position_id'             => $posRecruit?->id,
-                'grade_id'                => $gradeSpv?->id,
-                'work_schedule_scheme_id' => $scheme52?->id,
-                'join_date'               => '2024-11-10',
-                'birth_date'              => '1995-07-18',
-                'is_active'               => true,
-            ],
-            [
-                'nik'                     => '1006',
-                'full_name'               => 'Fajar Nugraha',
-                'email'                   => 'fajar@lokahr.com',
-                'phone'                   => '081366778899',
-                'department_id'           => $opsDept?->id,
-                'sub_department_id'       => $subInfra?->id,
-                'position_id'             => $posNetwork?->id,
-                'grade_id'                => $gradeOfficer?->id,
-                'work_schedule_scheme_id' => $scheme52?->id,
-                'join_date'               => '2025-08-20',
-                'birth_date'              => '1999-03-25',
-                'is_active'               => true,
-            ],
-            [
-                'nik'                     => '1007',
-                'full_name'               => 'Gita Permata',
-                'email'                   => 'gita@lokahr.com',
-                'phone'                   => '081377889900',
-                'department_id'           => $opsDept?->id,
-                'sub_department_id'       => $subInfra?->id,
-                'position_id'             => $posNetwork?->id,
-                'grade_id'                => $gradeOfficer?->id,
-                'work_schedule_scheme_id' => $scheme52?->id,
-                'join_date'               => '2026-02-14',
-                'birth_date'              => '2001-09-09',
-                'is_active'               => false,
-            ],
-            [
-                'nik'                     => '1008',
-                'full_name'               => 'Hendy Santoso',
-                'email'                   => 'hendy@lokahr.com',
-                'phone'                   => '081388990011',
-                'department_id'           => $itDept?->id,
-                'sub_department_id'       => $subApp?->id,
-                'position_id'             => $posProgrammer?->id,
-                'grade_id'                => $gradeSpv?->id,
-                'work_schedule_scheme_id' => $scheme52?->id,
-                'join_date'               => '2023-05-01',
-                'birth_date'              => '1994-12-30',
-                'is_active'               => true,
-            ],
         ];
-
-        foreach ($employees as $employee) {
+        
+foreach ($employees as $employee) {
             Employee::updateOrCreate(
-                ['nik' => $employee['nik']],
+                ['nip' => $employee['nip']], // ✅ Ubah dari 'nik' menjadi 'nip'
                 $employee
             );
         }
+
+        // Jalankan Job untuk menghitung umur dan lama bekerja
+        CalculateEmployeeMetricsJob::dispatchSync();
     }
 }

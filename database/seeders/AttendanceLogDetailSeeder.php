@@ -19,12 +19,12 @@ class AttendanceLogDetailSeeder extends Seeder
             ]
         );
 
-        $employees = Employee::whereIn('nik', ['1001', '1002', '1003'])->get();
+        $employees = Employee::whereIn('nip', ['1001', '1002', '1003'])->get();
 
         foreach ($employees as $employee) {
             AttendanceLogDetail::updateOrCreate(
                 [
-                    'nik'  => $employee->nik,
+                    'nip'  => $employee->nip,
                     'date' => '2026-09-30',
                 ],
                 [

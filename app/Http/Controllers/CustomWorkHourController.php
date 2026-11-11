@@ -7,13 +7,40 @@ use Illuminate\Http\Request;
 
 class CustomWorkHourController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $customWorkHours = CustomWorkHour::latest()->get();
+        $query = CustomWorkHour::query();
+
+        // 1. Search Global (Code, Work Scheme, Description)
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('code', 'like', "%{$search}%")
+                  ->orWhere('work_scheme', 'like', "%{$search}%")
+                  ->orWhere('description', 'like', "%{$search}%");
+            });
+        }
+
+        // 2. Filter Status (Aktif / Non Aktif)
+        if ($request->has('status') && $request->status !== null && $request->status !== '') {
+            $status = filter_var($request->status, FILTER_VALIDATE_BOOLEAN);
+            $query->where('is_active', $status);
+        }
+
+        $perPage = $request->input('per_page', 10);
+        $customWorkHours = $query->latest()->paginate($perPage);
 
         return response()->json([
             'success' => true,
-            'data'    => $customWorkHours
+            'data'    => $customWorkHours->items(),
+            'meta'    => [
+                'current_page' => $customWorkHours->currentPage(),
+                'from'         => $customWorkHours->firstItem(),
+                'last_page'    => $customWorkHours->lastPage(),
+                'per_page'     => $customWorkHours->perPage(),
+                'to'           => $customWorkHours->lastItem(),
+                'total'        => $customWorkHours->total(),
+            ]
         ]);
     }
 
@@ -29,7 +56,6 @@ class CustomWorkHourController extends Controller
             'is_active'   => 'boolean',
         ]);
 
-        // Generate ID / Code otomatis (misal: CUS001, CUS002)
         $latestRecord = CustomWorkHour::latest('id')->first();
         $nextNumber = $latestRecord ? $latestRecord->id + 1 : 1;
         $validated['code'] = 'CUS' . str_pad($nextNumber, 3, '0', STR_PAD_LEFT);

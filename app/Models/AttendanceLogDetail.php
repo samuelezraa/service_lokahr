@@ -12,7 +12,7 @@ class AttendanceLogDetail extends Model
     protected $fillable = [
         'attendance_log_id',
         'date',
-        'nik',
+        'nip', // 🟢 Ubah dari 'nik' menjadi 'nip'
         'department_id',
         'department_name',
         'employee_name',
@@ -35,10 +35,9 @@ class AttendanceLogDetail extends Model
         return $this->belongsTo(Department::class);
     }
 
-
-    // Tambahkan relasi ke model Employee berdasarkan NIK
+    // 🟢 UBAH RELASI: Gunakan 'nip' sebagai Foreign Key (bukan 'nik')
     public function employee()
     {
-        return $this->belongsTo(Employee::class, 'nik', 'nik')->with(['subDepartment', 'grade', 'position']);
+        return $this->belongsTo(Employee::class, 'nip', 'nip')->with(['subDepartment', 'grade', 'position']);
     }
 }

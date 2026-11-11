@@ -7,12 +7,41 @@ use Illuminate\Http\Request;
 
 class GradeController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $grades = Grade::orderBy('level', 'desc')->get();
+        $query = Grade::query();
+
+        // 1. Filter Search (berdasarkan name atau code)
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('code', 'like', "%{$search}%");
+            });
+        }
+
+        // 2. Filter Status Aktif/Nonaktif
+        if ($request->has('status') && $request->status !== '') {
+            $status = filter_var($request->status, FILTER_VALIDATE_BOOLEAN);
+            $query->where('is_active', $status);
+        }
+
+        $perPage = $request->input('per_page', 10);
+        
+        // Urutkan berdasarkan level tertinggi ke terendah, lalu paginate
+        $grades = $query->orderBy('level', 'desc')->paginate($perPage);
+
         return response()->json([
             'success' => true,
-            'data'    => $grades
+            'data'    => $grades->items(),
+            'meta'    => [
+                'current_page' => $grades->currentPage(),
+                'from'         => $grades->firstItem(),
+                'last_page'    => $grades->lastPage(),
+                'per_page'     => $grades->perPage(),
+                'to'           => $grades->lastItem(),
+                'total'        => $grades->total(),
+            ]
         ]);
     }
 
