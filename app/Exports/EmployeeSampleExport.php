@@ -4,26 +4,36 @@ namespace App\Exports;
 
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\WithHeadings;
+use Maatwebsite\Excel\Concerns\WithCustomCsvSettings;
 
-class EmployeeSampleExport implements FromArray, WithHeadings
+class EmployeeSampleExport implements FromArray, WithHeadings, WithCustomCsvSettings
 {
+    public function getCsvSettings(): array
+    {
+        return [
+            'delimiter'       => ';',
+            'use_bom'         => true,
+            'output_encoding' => 'UTF-8',
+        ];
+    }
+
     public function array(): array
     {
         return [
             [
-                'EMP001',                         // employee_id
-                '12344567290',                    // nip
-                'Zidane',                         // full_name
-                'zidane@example.com',             // email
-                '081236567890',                   // phone
-                'IT',                             // department (Nama Departemen Asli)
-                'Frontend Engineering',           // sub_department (Nama Sub Dept Asli)
-                'Programmer Officer',             // position (Nama POS Asli)
-                'Staff / Junior',                 // grade (Nama Grade Asli)
-                'Shift Regular 5 Hari',           // work_schedule_scheme
-                '2024-01-15',                     // join_date (YYYY-MM-DD)
-                '1995-05-20',                     // birth_date (YYYY-MM-DD)
-                'Aktif',                          // status
+                'EMP001',
+                '12344567290',
+                'Zidane',
+                'zidane@example.com',
+                '081236567890',
+                'IT',
+                'Frontend Engineering',
+                'Programmer Officer',
+                'Staff / Junior',
+                'Shift Regular 5 Hari',
+                '15-01-2024',
+                '20-05-1995',
+                'Aktif',
             ]
         ];
     }
@@ -31,19 +41,19 @@ class EmployeeSampleExport implements FromArray, WithHeadings
     public function headings(): array
     {
         return [
-            'employee_id',
-            'nip',
-            'full_name',
-            'email',
-            'phone',
-            'department',
-            'sub_department',
-            'position',
-            'grade',
-            'work_schedule_scheme',
-            'join_date',
-            'birth_date',
-            'status'
+            'ID Karyawan',
+            'NIP',
+            'Nama',
+            'Email',
+            'No. Telepon',
+            'Departemen',
+            'Sub Departemen',
+            'POS',
+            'Grade',
+            'Skema Hari Kerja',
+            'Tanggal Bergabung',
+            'Tanggal Lahir',
+            'Status'
         ];
     }
 }

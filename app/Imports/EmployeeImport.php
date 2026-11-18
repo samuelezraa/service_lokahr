@@ -45,9 +45,9 @@ class EmployeeImport implements ToArray, WithHeadingRow
 
     public function array(array $array): void
     {
-        foreach ($array as $index => $row) {
-            $nip = $row['nip'] ?? null;
-            $nama = $row['nama_lengkap'] ?? $row['full_name'] ?? null;
+        foreach ($array as $row) {
+            $nip  = $row['nip'] ?? null;
+            $nama = $row['nama'] ?? $row['nama_lengkap'] ?? $row['full_name'] ?? null;
 
             if (empty($nip) || empty($nama)) {
                 continue;
@@ -55,44 +55,45 @@ class EmployeeImport implements ToArray, WithHeadingRow
 
             $stringNip = (string) $nip;
 
-            // Master data resolvers
-            $deptVal = $row['department'] ?? $row['departemen'] ?? $row['department_id'] ?? null;
-            $departmentId = is_numeric($deptVal) ? (int)$deptVal : (!empty($deptVal) ? Department::where('name', $deptVal)->value('id') : null);
+            // Master data resolvers (Mendukung header Bahasa Indonesia tanpa underscore)
+            $deptVal = $row['departemen'] ?? $row['department'] ?? null;
+            $departmentId = is_numeric($deptVal) ? (int)$deptVal : (!empty($deptVal) ? Department::where('name', trim($deptVal))->value('id') : null);
 
-            $subDeptVal = $row['sub_department'] ?? $row['sub_departemen'] ?? $row['sub_department_id'] ?? null;
-            $subDepartmentId = is_numeric($subDeptVal) ? (int)$subDeptVal : (!empty($subDeptVal) ? SubDepartment::where('name', $subDeptVal)->value('id') : null);
+            $subDeptVal = $row['sub_departemen'] ?? $row['sub_department'] ?? null;
+            $subDepartmentId = is_numeric($subDeptVal) ? (int)$subDeptVal : (!empty($subDeptVal) ? SubDepartment::where('name', trim($subDeptVal))->value('id') : null);
 
-            $posVal = $row['position'] ?? $row['pos'] ?? $row['position_id'] ?? null;
-            $positionId = is_numeric($posVal) ? (int)$posVal : (!empty($posVal) ? Position::where('title', $posVal)->value('id') : null);
+            $posVal = $row['pos'] ?? $row['position'] ?? null;
+            $positionId = is_numeric($posVal) ? (int)$posVal : (!empty($posVal) ? Position::where('title', trim($posVal))->value('id') : null);
 
-            $gradeVal = $row['grade'] ?? $row['grade_id'] ?? null;
-            $gradeId = is_numeric($gradeVal) ? (int)$gradeVal : (!empty($gradeVal) ? Grade::where('name', $gradeVal)->value('id') : null);
+            $gradeVal = $row['grade'] ?? null;
+            $gradeId = is_numeric($gradeVal) ? (int)$gradeVal : (!empty($gradeVal) ? Grade::where('name', trim($gradeVal))->value('id') : null);
 
-            $schemeVal = $row['work_schedule_scheme'] ?? $row['skema_hari_kerja'] ?? $row['work_schedule_scheme_id'] ?? null;
-            $schemeId = is_numeric($schemeVal) ? (int)$schemeVal : (!empty($schemeVal) ? WorkScheduleScheme::where('name', $schemeVal)->value('id') : null);
+            $schemeVal = $row['skema_hari_kerja'] ?? $row['work_schedule_scheme'] ?? null;
+            $schemeId = is_numeric($schemeVal) ? (int)$schemeVal : (!empty($schemeVal) ? WorkScheduleScheme::where('name', trim($schemeVal))->value('id') : null);
 
             // Parsing Tanggal
-            $rawJoinDate = $row['tanggal_bergabung'] ?? $row['join_date'] ?? null;
+            $rawJoinDate  = $row['tanggal_bergabung'] ?? $row['join_date'] ?? null;
             $rawBirthDate = $row['tanggal_lahir'] ?? $row['birth_date'] ?? null;
 
-            $joinDate = $this->parseDate($rawJoinDate);
+            $joinDate  = $this->parseDate($rawJoinDate);
             $birthDate = $this->parseDate($rawBirthDate);
 
-            // 💡 HITUNG LANGSUNG UMUR & LAMA BEKERJA
-            $ageYears = $birthDate ? Carbon::parse($birthDate)->age : null;
-            $workDurationMonths = $joinDate ? Carbon::parse($joinDate)->diffInMonths(Carbon::now()) : null;
+            // Hitung langsung dengan pembulatan ke bawah tanpa desimal
+            $ageYears           = $birthDate ? (int) floor(Carbon::parse($birthDate)->diffInYears(Carbon::now())) : null;
+            $workDurationMonths = $joinDate ? (int) floor(Carbon::parse($joinDate)->diffInMonths(Carbon::now())) : null;
 
-            $phone = !empty($row['telepon'] ?? $row['phone']) 
-                ? Employee::phoneconvert($row['telepon'] ?? $row['phone']) 
-                : null;
+            $rawPhone = $row['no_telepon'] ?? $row['telepon'] ?? $row['phone'] ?? null;
+            $phone = !empty($rawPhone) ? Employee::phoneconvert((string) $rawPhone) : null;
+
+            $empId = $row['id_karyawan'] ?? $row['employee_id'] ?? null;
 
             Employee::updateOrCreate(
                 ['nip' => $stringNip],
                 [
-                    'employee_id'             => $row['employee_id'] ?? null,
+                    'employee_id'             => !empty($empId) ? (string) $empId : null,
                     'nip'                     => $stringNip,
                     'employee_password'       => Hash::make($stringNip),
-                    'full_name'               => $nama,
+                    'full_name'               => trim((string) $nama),
                     'email'                   => $row['email'] ?? null,
                     'phone'                   => $phone,
                     'department_id'           => $departmentId,
@@ -102,9 +103,9 @@ class EmployeeImport implements ToArray, WithHeadingRow
                     'work_schedule_scheme_id' => $schemeId,
                     'join_date'               => $joinDate,
                     'birth_date'              => $birthDate,
-                    'age_years'               => $ageYears,            // 👈 LANGSUNG TERISI IN-MEMORY
-                    'work_duration_months'    => $workDurationMonths,   // 👈 LANGSUNG TERISI IN-MEMORY
-                    'is_active'               => isset($row['status']) ? (strtolower($row['status']) === 'aktif' || $row['status'] == 1) : true,
+                    'age_years'               => $ageYears,
+                    'work_duration_months'    => $workDurationMonths,
+                    'is_active'               => isset($row['status']) ? (strtolower(trim((string) $row['status'])) === 'aktif' || $row['status'] == 1) : true,
                 ]
             );
         }

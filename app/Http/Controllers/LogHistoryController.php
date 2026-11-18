@@ -18,17 +18,45 @@ class LogHistoryController extends Controller
 
         $activities = $query->latest()->get();
 
-        // Petakan data Spatie agar cocok dengan struktur interface frontend (LogHistory)
         $formattedLogs = $activities->map(function ($activity, $index) {
-            // Tentukan tipe aksi berdasarkan event atau log name
             $type = 'Create';
             if ($activity->event === 'updated') $type = 'Edit';
             if ($activity->event === 'deleted') $type = 'Delete';
 
-            // Ambil nama user/PIC jika ada relasi causer, atau gunakan default
             $pic = 'System / Admin';
             if ($activity->causer) {
                 $pic = $activity->causer->name ?? $activity->causer->username ?? 'User';
+            }
+
+            // 🟢 LOGIKA PENYUSUNAN DESKRIPSI DETAIL (OLD vs NEW)
+            $description = $activity->description;
+            $properties = $activity->properties ?? [];
+            $changesNew = $properties['attributes'] ?? [];
+            $changesOld = $properties['old'] ?? [];
+
+            if ($activity->event === 'updated' && !empty($changesNew)) {
+                $details = [];
+                foreach ($changesNew as $field => $newValue) {
+                    // Abaikan timestamp atau field internal jika tidak perlu
+                    if (in_array($field, ['updated_at', 'created_at', 'id'])) continue;
+                    
+                    $oldValue = $changesOld[$field] ?? 'kosong';
+                    $newValueStr = is_array($newValue) ? json_encode($newValue) : (string) $newValue;
+                    $oldValueStr = is_array($oldValue) ? json_encode($oldValue) : (string) $oldValue;
+
+                    $details[] = "mengubah {$field} dari '{$oldValueStr}' menjadi '{$newValueStr}'";
+                }
+
+                if (!empty($details)) {
+                    $subjectName = class_basename($activity->subject_type ?? 'Data');
+                    $description = "Memperbarui {$subjectName}: " . implode(', ', $details);
+                }
+            } elseif ($activity->event === 'created') {
+                $subjectName = class_basename($activity->subject_type ?? 'Data');
+                $description = "Menambahkan {$subjectName} baru";
+            } elseif ($activity->event === 'deleted') {
+                $subjectName = class_basename($activity->subject_type ?? 'Data');
+                $description = "Menghapus {$subjectName}";
             }
 
             return [
@@ -37,8 +65,8 @@ class LogHistoryController extends Controller
                 'menu'        => $activity->log_name ?? 'Master Data',
                 'subMenu'     => class_basename($activity->subject_type ?? 'System'),
                 'pic'         => $pic,
-                'date'        => $activity->created_at->format('Y-m-d'),
-                'description' => $activity->description ?? 'Aktivitas pada ' . class_basename($activity->subject_type),
+                'date' => $activity->created_at->setTimezone('Asia/Jakarta')->format('Y-m-d'),
+                'description' => $description ?: ('Aktivitas pada ' . class_basename($activity->subject_type)),
             ];
         });
 

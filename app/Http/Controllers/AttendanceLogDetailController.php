@@ -60,7 +60,7 @@ class AttendanceLogDetailController extends Controller
             });
         }
 
-        $perPage = (int) $request->input('per_page', 10);
+        $perPage = (int) $request->input('per_page', 25);
         $paginated = $query->paginate($perPage);
 
         // Ambil semua NIP dari data absensi pada halaman aktif untuk pencocokan data Karyawan

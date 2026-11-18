@@ -26,7 +26,7 @@ class PeriodController extends Controller
         }
 
         // 2. Server-Side Pagination
-        $perPage = (int) $request->input('per_page', 10);
+        $perPage = (int) $request->input('per_page', 25);
         $paginated = $query->paginate($perPage);
 
         // 3. Map Response (Format Tanggal: d-m-Y -> DD-MM-YYYY)

@@ -51,7 +51,7 @@ class AnnualEventController extends Controller
         }
 
         // 5. Server-side Pagination
-        $perPage = $request->input('per_page', 10);
+        $perPage = $request->input('per_page', 25);
         $events = $query->latest('start_date')->paginate($perPage);
 
         return response()->json([

@@ -10,11 +10,26 @@ class UserSeeder extends Seeder
 {
     public function run(): void
     {
-        User::create([
-            'name' => 'Administrator',
-            'username' => 'admin',
-            'email' => 'admin@lokahr.com',
-            'password' => Hash::make('password123'), // Password di-hash agar aman
-        ]);
+        // Akun Administrator / IT
+        User::updateOrCreate(
+            ['email' => 'admin@lokahr.com'],
+            [
+                'name' => 'Administrator',
+                'username' => 'admin',
+                'password' => Hash::make('password123'),
+                'role' => 'IT',
+            ]
+        );
+
+        // Akun Khusus HR
+        User::updateOrCreate(
+            ['email' => 'hr@lokahr.com'],
+            [
+                'name' => 'Staff HR Management',
+                'username' => 'hrstaff',
+                'password' => Hash::make('password123'),
+                'role' => 'HR',
+            ]
+        );
     }
 }

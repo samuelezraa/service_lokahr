@@ -27,7 +27,7 @@ class WorkScheduleSchemeController extends Controller
         }
 
         // 3. Server-side Pagination
-        $perPage = $request->input('per_page', 10);
+        $perPage = $request->input('per_page', 25);
         $schemes = $query->latest()->paginate($perPage);
 
         return response()->json([

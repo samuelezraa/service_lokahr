@@ -24,7 +24,7 @@ class EmployeePresenceReportController extends Controller
         }
 
         // 2. Server-Side Pagination
-        $perPage = (int) $request->input('per_page', 10);
+        $perPage = (int) $request->input('per_page', 25);
         $paginated = $query->paginate($perPage);
 
         $startDate = $request->input('start_date');

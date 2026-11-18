@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Position;
+use App\Models\Department;
+use App\Models\SubDepartment;
 use Illuminate\Http\Request;
 
 class PositionController extends Controller
@@ -11,13 +13,12 @@ class PositionController extends Controller
     {
         $query = Position::query();
 
-        // 🟢 1. Jika request dari dropdown master filter (misal: all=true / per_page=100)
-        if ($request->boolean('all')) {
-            $positions = $query->where('is_active', true)->get();
-            return response()->json([
-                'success' => true,
-                'data'    => $positions,
-            ]);
+        // 1. Filter Status Aktif / Nonaktif
+        if ($request->has('status') && $request->status !== '') {
+            $status = filter_var($request->status, FILTER_VALIDATE_BOOLEAN);
+            $query->where('is_active', $status);
+        } else {
+            $query->where('is_active', true);
         }
 
         // 2. Filter Search (berdasarkan title atau code)
@@ -29,23 +30,53 @@ class PositionController extends Controller
             });
         }
 
-        // 3. Filter Departemen (via Code)
-        if ($request->has('department_code') && !empty($request->department_code)) {
-            $query->where('department_code', $request->department_code);
+        // 3. Filter Departemen secara Fleksibel (ID, Code, atau Nama)
+        if ($request->has('department_id') && !empty($request->department_id)) {
+            $deptInput = $request->department_id;
+            $dept = Department::find($deptInput); // Cari objek berdasarkan ID jika berupa angka
+
+            $deptCode = $dept ? $dept->code : null;
+            $deptName = $dept ? $dept->name : null;
+
+            $query->where(function($q) use ($deptInput, $deptCode, $deptName) {
+                $q->where('department_code', $deptInput);
+                if ($deptCode) {
+                    $q->orWhere('department_code', $deptCode);
+                }
+                if ($deptName) {
+                    $q->orWhere('department_code', $deptName);
+                }
+            });
         }
 
-        // 4. Filter Sub Departemen (via Code)
-        if ($request->has('sub_department_code') && !empty($request->sub_department_code)) {
-            $query->where('sub_department_code', $request->sub_department_code);
+        // 4. Filter Sub Departemen secara Fleksibel (ID, Code, atau Nama)
+        if ($request->has('sub_department_id') && !empty($request->sub_department_id)) {
+            $subInput = $request->sub_department_id;
+            $subDept = SubDepartment::find($subInput); // Cari objek berdasarkan ID jika berupa angka
+
+            $subCode = $subDept ? $subDept->code : null;
+            $subName = $subDept ? $subDept->name : null;
+
+            $query->where(function($q) use ($subInput, $subCode, $subName) {
+                $q->where('sub_department_code', $subInput);
+                if ($subCode) {
+                    $q->orWhere('sub_department_code', $subCode);
+                }
+                if ($subName) {
+                    $q->orWhere('sub_department_code', $subName);
+                }
+            });
         }
 
-        // 5. Filter Status Aktif / Nonaktif
-        if ($request->has('status') && $request->status !== '') {
-            $status = filter_var($request->status, FILTER_VALIDATE_BOOLEAN);
-            $query->where('is_active', $status);
+        if ($request->boolean('all')) {
+            $positions = $query->get();
+            return response()->json([
+                'success' => true,
+                'data'    => $positions,
+            ]);
         }
 
-        $perPage = $request->input('per_page', 10);
+        $perPage = $request->input('per_page', 25);
         $positions = $query->latest()->paginate($perPage);
 
         return response()->json([

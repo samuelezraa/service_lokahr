@@ -23,19 +23,16 @@ class CalculateEmployeeMetricsJob implements ShouldQueue
             $ageYears = null;
             $workMonths = null;
 
-            // Hitung Umur dalam satuan Tahun (berdasarkan birth_date asli di database)
             if ($employee->getRawOriginal('birth_date')) {
                 $birthDate = Carbon::parse($employee->getRawOriginal('birth_date'));
-                $ageYears = $birthDate->diffInYears($now);
+                $ageYears = (int) floor($birthDate->diffInYears($now));
             }
 
-            // Hitung Lama Bekerja dalam satuan Bulan (berdasarkan join_date asli di database)
             if ($employee->getRawOriginal('join_date')) {
                 $joinDate = Carbon::parse($employee->getRawOriginal('join_date'));
-                $workMonths = $joinDate->diffInMonths($now);
+                $workMonths = (int) floor($joinDate->diffInMonths($now));
             }
 
-            // Update kolom tanpa mentrigger event berlebih
             $employee->update([
                 'age_years'            => $ageYears,
                 'work_duration_months' => $workMonths,

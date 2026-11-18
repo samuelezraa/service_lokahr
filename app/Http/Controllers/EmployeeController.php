@@ -3,14 +3,15 @@
 namespace App\Http\Controllers;
 
 use App\Models\Employee;
-use App\Jobs\CalculateEmployeeMetricsJob;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Carbon\Carbon;
 
 use App\Exports\EmployeeExport;
 use App\Imports\EmployeeImport;
 use App\Exports\EmployeeSampleExport;
 use Maatwebsite\Excel\Facades\Excel; 
+
 class EmployeeController extends Controller
 {
     public function index(Request $request)
@@ -53,7 +54,7 @@ class EmployeeController extends Controller
             $query->where('is_active', $status);
         }
 
-        $perPage = $request->input('per_page', 10);
+        $perPage = $request->input('per_page', 25);
         $employees = $query->latest()->paginate($perPage);
 
         return response()->json([
@@ -93,13 +94,19 @@ class EmployeeController extends Controller
             $validated['phone'] = Employee::phoneconvert($validated['phone']);
         }
 
+        // Hitung langsung Umur & Lama Kerja (dibulatkan tanpa koma)
+        $now = Carbon::now();
+        $validated['age_years'] = !empty($validated['birth_date']) 
+            ? (int) floor(Carbon::parse($validated['birth_date'])->diffInYears($now)) 
+            : null;
+        $validated['work_duration_months'] = !empty($validated['join_date']) 
+            ? (int) floor(Carbon::parse($validated['join_date'])->diffInMonths($now)) 
+            : null;
+
         // Set default password adalah NIP
         $validated['employee_password'] = Hash::make($validated['nip']);
 
         $employee = Employee::create($validated);
-
-        // Jalankan Job kalkulasi umur & masa kerja
-        CalculateEmployeeMetricsJob::dispatch();
 
         return response()->json([
             'success' => true,
@@ -155,15 +162,21 @@ class EmployeeController extends Controller
             $validated['phone'] = Employee::phoneconvert($validated['phone']);
         }
 
+        // Hitung ulang Umur & Lama Kerja (dibulatkan tanpa koma)
+        $now = Carbon::now();
+        $validated['age_years'] = !empty($validated['birth_date']) 
+            ? (int) floor(Carbon::parse($validated['birth_date'])->diffInYears($now)) 
+            : null;
+        $validated['work_duration_months'] = !empty($validated['join_date']) 
+            ? (int) floor(Carbon::parse($validated['join_date'])->diffInMonths($now)) 
+            : null;
+
         // Jika NIP berubah, update juga default password jika diperlukan
         if (isset($validated['nip']) && $validated['nip'] !== $employee->nip) {
             $validated['employee_password'] = Hash::make($validated['nip']);
         }
 
         $employee->update($validated);
-
-        // Jalankan Job kalkulasi ulang umur & masa kerja
-        CalculateEmployeeMetricsJob::dispatch();
 
         return response()->json([
             'success' => true,
@@ -189,12 +202,25 @@ class EmployeeController extends Controller
         ]);
     }
 
-  public function export(Request $request)
+    public function export(Request $request)
     {
         $idsParam = $request->input('ids');
         $selectedIds = !empty($idsParam) ? explode(',', $idsParam) : [];
 
-        return Excel::download(new EmployeeExport($selectedIds), 'data-karyawan-' . date('Y-m-d') . '.xlsx');
+        $filters = $request->only([
+            'search',
+            'department_id',
+            'sub_department_id',
+            'position_id',
+            'grade_id',
+            'status',
+        ]);
+
+        return Excel::download(
+            new EmployeeExport($selectedIds, $filters), 
+            'data-karyawan-' . date('Y-m-d') . '.csv', 
+            \Maatwebsite\Excel\Excel::CSV
+        );
     }
 
     public function import(Request $request)
@@ -239,32 +265,33 @@ class EmployeeController extends Controller
         ]);
     }
 
-
     public function bulkResetPassword(Request $request)
-        {
-            $validated = $request->validate([
-                'ids'   => 'required|array',
-                'ids.*' => 'exists:employees,id',
-            ]);
+    {
+        $validated = $request->validate([
+            'ids'   => 'required|array',
+            'ids.*' => 'exists:employees,id',
+        ]);
 
-            $employees = Employee::whereIn('id', $validated['ids'])->get();
+        $employees = Employee::whereIn('id', $validated['ids'])->get();
 
-            foreach ($employees as $employee) {
-                $employee->update([
-                    'employee_password' => Hash::make((string) $employee->nip)
-                ]);
-            }
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Password karyawan berhasil di-reset ke NIP masing-masing.'
+        foreach ($employees as $employee) {
+            $employee->update([
+                'employee_password' => Hash::make((string) $employee->nip)
             ]);
         }
 
+        return response()->json([
+            'success' => true,
+            'message' => 'Password karyawan berhasil di-reset ke NIP masing-masing.'
+        ]);
+    }
 
     public function downloadSample()
     {
-        return Excel::download(new EmployeeSampleExport, 'template-import-karyawan.xlsx');
+        return Excel::download(
+            new EmployeeSampleExport, 
+            'template-import-karyawan.csv', 
+            \Maatwebsite\Excel\Excel::CSV
+        );
     }
 }
-

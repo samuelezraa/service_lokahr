@@ -5,14 +5,26 @@ namespace App\Exports;
 use App\Models\Employee;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\WithHeadings;
+use Maatwebsite\Excel\Concerns\WithCustomCsvSettings;
 
-class EmployeeExport implements FromArray, WithHeadings
+class EmployeeExport implements FromArray, WithHeadings, WithCustomCsvSettings
 {
     protected array $selectedIds;
+    protected array $filters;
 
-    public function __construct(array $selectedIds = [])
+    public function __construct(array $selectedIds = [], array $filters = [])
     {
         $this->selectedIds = array_filter($selectedIds);
+        $this->filters = $filters;
+    }
+
+    public function getCsvSettings(): array
+    {
+        return [
+            'delimiter'              => ';',
+            'use_bom'                => true,
+            'output_encoding'        => 'UTF-8',
+        ];
     }
 
     public function array(): array
@@ -25,12 +37,40 @@ class EmployeeExport implements FromArray, WithHeadings
             'workScheduleScheme'
         ]);
 
-        // Filter berdasarkan ID yang dipilih jika ada
+        // 1. Jika ada baris yang dicentang (checkbox), export berdasarkan ID terpilih
         if (!empty($this->selectedIds)) {
             $query->whereIn('id', $this->selectedIds);
+        } else {
+            // 2. Jika tidak ada yang dicentang, export berdasarkan filter aktif di tabel
+            if (!empty($this->filters['search'])) {
+                $search = $this->filters['search'];
+                $query->where(function ($q) use ($search) {
+                    $q->where('full_name', 'like', "%{$search}%")
+                      ->orWhere('nip', 'like', "%{$search}%")
+                      ->orWhere('employee_id', 'like', "%{$search}%")
+                      ->orWhere('email', 'like', "%{$search}%")
+                      ->orWhere('phone', 'like', "%{$search}%");
+                });
+            }
+            if (!empty($this->filters['department_id'])) {
+                $query->where('department_id', $this->filters['department_id']);
+            }
+            if (!empty($this->filters['sub_department_id'])) {
+                $query->where('sub_department_id', $this->filters['sub_department_id']);
+            }
+            if (!empty($this->filters['position_id'])) {
+                $query->where('position_id', $this->filters['position_id']);
+            }
+            if (!empty($this->filters['grade_id'])) {
+                $query->where('grade_id', $this->filters['grade_id']);
+            }
+            if (isset($this->filters['status']) && $this->filters['status'] !== '') {
+                $status = filter_var($this->filters['status'], FILTER_VALIDATE_BOOLEAN);
+                $query->where('is_active', $status);
+            }
         }
 
-        $employees = $query->get();
+        $employees = $query->latest()->get();
         $data = [];
 
         foreach ($employees as $emp) {
@@ -47,8 +87,8 @@ class EmployeeExport implements FromArray, WithHeadings
                 $emp->workScheduleScheme?->name,
                 $emp->join_date,
                 $emp->birth_date,
-                $emp->age_years,
-                $emp->work_duration_months,
+                $emp->age_years !== null ? (int) floor($emp->age_years) : null,
+                $emp->work_duration_months !== null ? (int) floor($emp->work_duration_months) : null,
                 $emp->is_active ? 'Aktif' : 'Non Aktif',
             ];
         }
@@ -59,11 +99,11 @@ class EmployeeExport implements FromArray, WithHeadings
     public function headings(): array
     {
         return [
-            'Employee ID', 
+            'ID Karyawan', 
             'NIP', 
-            'Nama Lengkap', 
+            'Nama', 
             'Email', 
-            'Telepon', 
+            'No. Telepon', 
             'Departemen', 
             'Sub Departemen', 
             'POS', 
@@ -72,7 +112,7 @@ class EmployeeExport implements FromArray, WithHeadings
             'Tanggal Bergabung', 
             'Tanggal Lahir', 
             'Umur (Thn)', 
-            'Lama Bekerja (Bln)', 
+            'Lama Kerja (Bln)', 
             'Status'
         ];
     }

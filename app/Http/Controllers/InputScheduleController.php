@@ -5,10 +5,12 @@ namespace App\Http\Controllers;
 use App\Models\Schedule;
 use App\Models\ScheduleDetail;
 use App\Models\Employee;
+use App\Models\Period;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 use App\Exports\InputScheduleExport;
 use App\Exports\InputScheduleSampleExport;
+use App\Exports\MyScheduleExport;
 use App\Imports\InputScheduleImport;
 use Maatwebsite\Excel\Facades\Excel;
 
@@ -16,11 +18,10 @@ class InputScheduleController extends Controller
 {
     /**
      * 1. GET /api/schedule/input-schedule
-     * Mendapatkan daftar jadwal & ringkasan berdasarkan periode dengan Pagination Server-Side, Search, & Filter Dept/SubDept
      */
     public function index(Request $request)
     {
-        $period = $request->query('period', date('Y-m'));
+        $period = $request->query('period');
 
         $query = Schedule::with(['employee', 'department', 'subDepartment'])
             ->whereNotNull('employee_id');
@@ -107,7 +108,6 @@ class InputScheduleController extends Controller
 
     /**
      * GET /api/schedule/input-schedule/weekly-hours
-     * Mendapatkan pengaturan jam kerja mingguan global terkini dari database
      */
     public function getWeeklyHours()
     {
@@ -139,67 +139,85 @@ class InputScheduleController extends Controller
 
     /**
      * 2. GET /api/schedule/input-schedule/edit/{id}
+     * Mendukung rentang tanggal lintas bulan berdasarkan Master Period (start_date s.d. end_date)
      */
-public function showDetail(Request $request, $id)
+    public function showDetail(Request $request, $id)
     {
         $schedule = Schedule::with(['employee', 'department', 'subDepartment', 'scheduleDetails'])
             ->findOrFail($id);
 
-        $period = $schedule->period_code ?? $request->query('period', '2026-10');
-        list($year, $month) = explode('-', $period);
-        $totalDaysInMonth = cal_days_in_month(CAL_GREGORIAN, (int)$month, (int)$year);
+        $periodCode = $schedule->period_code ?? $request->query('period');
+        $periodModel = $periodCode ? Period::where('code', $periodCode)->first() : null;
+
+        if ($periodModel) {
+            $startDate   = Carbon::parse($periodModel->start_date);
+            $endDate     = Carbon::parse($periodModel->end_date);
+            $periodLabel = $periodModel->name;
+        } elseif (!empty($periodCode) && str_contains($periodCode, '-')) {
+            [$year, $month] = explode('-', $periodCode);
+            $startDate   = Carbon::createFromDate((int)$year, (int)$month, 1);
+            $endDate     = $startDate->copy()->endOfMonth();
+            $periodLabel = $startDate->format('F Y');
+        } else {
+            $startDate   = Carbon::now()->startOfMonth();
+            $endDate     = $startDate->copy()->endOfMonth();
+            $periodLabel = $startDate->format('F Y');
+        }
 
         $details = $schedule->scheduleDetails->keyBy('day_of_week');
 
-        // 1. Ambil data absensi aktual dari database berdasarkan NIP & Periode
-        $actualAttendances = \App\Models\EmployeeAttendanceDetail::whereHas('employeeAttendance', function($q) use ($schedule, $period) {
+        $actualAttendances = \App\Models\EmployeeAttendanceDetail::whereHas('employeeAttendance', function ($q) use ($schedule, $periodCode) {
             $q->where('nip', trim($schedule->nip))
-              ->where('period_code', $period);
-        })->get()->keyBy(function($item) {
+              ->where('period_code', $periodCode);
+        })->get()->keyBy(function ($item) {
             return date('Y-m-d', strtotime($item->date));
         });
 
         $scheduleList = [];
         $dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
 
-        for ($i = 1; $i <= $totalDaysInMonth; $i++) {
-            $dateStr = sprintf('%s-%s-%02d', $year, $month, $i);
-            $timestamp = strtotime($dateStr);
-            $dayOfWeekIndex = date('w', $timestamp);
-            $dayName = $dayNames[$dayOfWeekIndex];
+        $cursor = $startDate->copy();
+        $no = 1;
 
-            $dayOfWeekEnglish = strtolower(date('l', $timestamp));
+        while ($cursor->lte($endDate)) {
+            $dateStr = $cursor->format('Y-m-d');
+            $dayOfWeekIndex = (int) $cursor->format('w');
+            $dayName = $dayNames[$dayOfWeekIndex];
+            $dayOfWeekEnglish = strtolower($cursor->format('l'));
+
             $detail = $details->get($dayOfWeekEnglish);
-            
-            // Cari data absensi aktual berdasarkan tanggal (misal: "2026-10-01")
             $actualLog = $actualAttendances->get($dateStr);
 
-            $isWeekend = ($dayOfWeekIndex == 0 || $dayOfWeekIndex == 6);
+            $isWeekend = ($dayOfWeekIndex === 0 || $dayOfWeekIndex === 6);
             $isLibur = $detail ? ($detail->is_day_off || !$detail->is_active) : $isWeekend;
 
             $status = $isLibur ? 'Libur' : 'Berangkat';
             $checkIn = $detail ? $detail->check_in_time : ($isWeekend ? '00:00:00' : '08:00:00');
             $checkOut = $detail ? $detail->check_out_time : ($isWeekend ? '00:00:00' : '17:00:00');
 
-            // 2. Ambil jam aktual secara dinamis dari database (jika ada)
             $actualCheckIn = $actualLog ? ($actualLog->actual_check_in ?? '00:00:00') : '00:00:00';
             $actualCheckOut = $actualLog ? ($actualLog->actual_check_out ?? '00:00:00') : '00:00:00';
 
             $scheduleList[] = [
-                'id'                => $detail ? (string) $detail->id : 'temp_' . $i,
-                'no'                => $i,
+                'id'                => $detail ? (string) $detail->id : 'temp_' . $no,
+                'no'                => $no,
                 'dayName'           => $dayName,
                 'date'              => $dateStr,
                 'day_of_week'       => $dayOfWeekEnglish,
                 'attendanceStatus'  => $status,
                 'scheduledCheckIn'  => $checkIn,
                 'scheduledCheckOut' => $checkOut,
-                'actualCheckIn'     => $actualCheckIn,   // 👈 Wajib menggunakan variabel dinamis
-                'actualCheckOut'    => $actualCheckOut,  // 👈 Wajib menggunakan variabel dinamis
+                'actualCheckIn'     => $actualCheckIn,
+                'actualCheckOut'    => $actualCheckOut,
                 'notes'             => $actualLog?->notes ?? ($detail?->annual_event_name ?? '-'),
-                'ref'               => $schedule->ref ?? $period,
+                'ref'               => $schedule->ref ?? $periodCode,
             ];
+
+            $cursor->addDay();
+            $no++;
         }
+
+        $totalDaysInPeriod = count($scheduleList);
 
         return response()->json([
             'success' => true,
@@ -207,14 +225,14 @@ public function showDetail(Request $request, $id)
                 'id'            => $schedule->id,
                 'name'          => $schedule->employee_name ?? $schedule->employee?->full_name ?? '-',
                 'nip'           => $schedule->nip ?? $schedule->employee?->nip ?? '-',
-                'period'        => date('F Y', strtotime("$year-$month-01")),
-                'dateRange'     => "$year-$month-01 — $year-$month-$totalDaysInMonth",
+                'period'        => $periodLabel,
+                'dateRange'     => $startDate->format('Y-m-d') . ' — ' . $endDate->format('Y-m-d'),
                 'department'    => $schedule->department_name ?? $schedule->department?->name ?? '-',
                 'subDepartment' => $schedule->sub_department_name ?? $schedule->subDepartment?->name ?? '-',
                 'scheme'        => $schedule->work_scheme ?? 'Skema 5-2',
                 'hoursPerDay'   => 9,
                 'summary'       => [
-                    'totalPeriodDays' => $totalDaysInMonth,
+                    'totalPeriodDays' => $totalDaysInPeriod,
                     'totalWorkDays'   => collect($scheduleList)->where('attendanceStatus', 'Berangkat')->count(),
                     'totalOffDays'    => collect($scheduleList)->where('attendanceStatus', 'Libur')->count(),
                     'totalPhDays'     => $schedule->ph_days,
@@ -280,7 +298,6 @@ public function showDetail(Request $request, $id)
 
     /**
      * 4. POST /api/schedule/input-schedule/weekly-hours
-     * Menyimpan pengaturan jam kerja mingguan global ke seluruh karyawan
      */
     public function setWeeklyHours(Request $request)
     {
@@ -333,7 +350,6 @@ public function showDetail(Request $request, $id)
 
     /**
      * 5. POST /api/schedule/input-schedule/import
-     * Mengelola upload file Excel/CSV data jadwal kehadiran
      */
     public function import(Request $request)
     {
@@ -360,7 +376,6 @@ public function showDetail(Request $request, $id)
 
     /**
      * 6. GET /api/schedule/input-schedule/export
-     * Mengunduh data jadwal kehadiran dalam format Excel (.xlsx)
      */
     public function export(Request $request)
     {
@@ -380,69 +395,63 @@ public function showDetail(Request $request, $id)
 
     /**
      * 7. GET /api/schedule/input-schedule/sample
-     * Mengunduh template sample file Excel untuk Import Kehadiran
      */
-    public function downloadSample()
+    public function downloadSample(Request $request)
     {
-        return Excel::download(new InputScheduleSampleExport, 'sample-template-import-schedule.xlsx');
+        $period = $request->query('period')
+            ?? Period::where('is_active', true)->orderBy('start_date')->value('code')
+            ?? date('Y-m');
+        $fileName = "sample-template-import-schedule-{$period}.xlsx";
+
+        return Excel::download(new InputScheduleSampleExport($period), $fileName);
     }
 
     /**
      * 8. GET /api/schedule/jadwalku
      */
-   /**
-     * 8. GET /api/schedule/jadwalku
-     */
- /**
-     * 8. GET /api/schedule/jadwalku
-     * Mendapatkan rekapitulasi jadwalku dengan Server-Side Pagination, Search, & Filter (Dept, SubDept, Grade)
-     */
     public function getMySchedule(Request $request)
     {
-        $period = $request->query('period', '2026-10');
+        $defaultPeriod = Period::where('is_active', true)->orderBy('start_date')->value('code') ?? '220001';
+        $period = $request->query('period', $defaultPeriod);
 
         $query = Schedule::with(['employee.department', 'employee.subDepartment', 'employee.grade'])
             ->where('period_code', $period);
 
-        // Server-Side Search
         if ($request->has('search') && !empty($request->search)) {
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('nip', 'like', "%{$search}%")
                   ->orWhere('employee_name', 'like', "%{$search}%")
-                  ->orWhereHas('employee', function($empQ) use ($search) {
+                  ->orWhereHas('employee', function ($empQ) use ($search) {
                       $empQ->where('full_name', 'like', "%{$search}%")
                            ->orWhere('nip', 'like', "%{$search}%");
                   });
             });
         }
 
-        // Server-Side Filter Departemen (dept / department_id)
         $deptVal = $request->query('department_id', $request->query('dept'));
         if (!empty($deptVal)) {
             $query->where('department_id', $deptVal);
         }
 
-        // Server-Side Filter Sub Departemen
         if ($request->has('sub_department') && !empty($request->sub_department)) {
             $subDept = $request->sub_department;
-            $query->where(function($q) use ($subDept) {
+            $query->where(function ($q) use ($subDept) {
                 $q->where('sub_department_name', $subDept)
-                  ->orWhereHas('subDepartment', function($subQ) use ($subDept) {
+                  ->orWhereHas('subDepartment', function ($subQ) use ($subDept) {
                       $subQ->where('name', $subDept);
                   });
             });
         }
 
-        // Server-Side Filter Grade
         if ($request->has('grade') && !empty($request->grade)) {
             $grade = $request->grade;
-            $query->whereHas('employee.grade', function($q) use ($grade) {
+            $query->whereHas('employee.grade', function ($q) use ($grade) {
                 $q->where('name', $grade);
             });
         }
 
-        $perPage = (int) $request->input('per_page', 10);
+        $perPage = (int) $request->input('per_page', 25);
         $paginated = $query->latest()->paginate($perPage);
 
         $mappedItems = collect($paginated->items())->map(function ($sch) use ($period) {
@@ -455,7 +464,7 @@ public function showDetail(Request $request, $id)
                 'department'     => $sch->department_name ?? $sch->department?->name ?? '-',
                 'sub_department' => $sch->sub_department_name ?? $sch->subDepartment?->name ?? '-',
                 'grade'          => $sch->employee?->grade?->name ?? 'Officer',
-                'off_days'       => (int) $sch->off_days,       
+                'off_days'       => (int) $sch->off_days,
                 'ph_days'        => (int) $sch->ph_days,
                 'permit_days'    => (int) $sch->permit_days,
                 'alpha_days'     => (int) $sch->alpha_days,
@@ -481,89 +490,31 @@ public function showDetail(Request $request, $id)
         ]);
     }
 
-    /**
-     * 9. POST /api/schedule/jadwalku/export
-     */
    /**
      * 9. POST /api/schedule/jadwalku/export
-     * Mengunduh rekapitulasi jadwalku dalam format CSV (.csv)
-     */
-   /**
-     * 9. POST /api/schedule/jadwalku/export
-     * Mengunduh rekapitulasi jadwalku dalam format Excel (.xlsx) yang rapi dan terpisah kolomnya
      */
     public function exportMySchedule(Request $request)
     {
-        $period = $request->input('period', '2026-10');
-        $selectedIds = $request->input('ids', []);
+        $defaultPeriod = Period::where('is_active', true)->orderBy('start_date')->value('code') ?? '220001';
+        $period        = $request->input('period', $defaultPeriod);
+        $selectedIds   = $request->input('ids', []);
+        $search        = $request->input('search');
+        $departmentId  = $request->input('department_id', $request->input('dept'));
+        $subDepartment = $request->input('sub_department');
+        $grade         = $request->input('grade');
 
         $fileName = "rekap-jadwalku-period-{$period}.xlsx";
 
         return Excel::download(
-            new class($period, $selectedIds) implements \Maatwebsite\Excel\Concerns\FromArray, \Maatwebsite\Excel\Concerns\WithHeadings {
-                protected $period;
-                protected $selectedIds;
-
-                public function __construct($period, $selectedIds) {
-                    $this->period = $period;
-                    $this->selectedIds = array_filter($selectedIds);
-                }
-
-                public function array(): array {
-                    $query = Schedule::with(['employee.department', 'employee.subDepartment', 'employee.grade'])
-                        ->where('period_code', $this->period);
-
-                    if (!empty($this->selectedIds)) {
-                        $query->whereIn('id', $this->selectedIds);
-                    }
-
-                    $schedules = $query->get();
-                    $data = [];
-
-                    foreach ($schedules as $sch) {
-                        $data[] = [
-                            $sch->nip ?? $sch->employee?->nip ?? '-',
-                            $sch->employee_name ?? $sch->employee?->full_name ?? '-',
-                            $sch->department_name ?? $sch->department?->name ?? '-',
-                            $sch->sub_department_name ?? $sch->subDepartment?->name ?? '-',
-                            $sch->employee?->grade?->name ?? 'Officer',
-                            (int) $sch->off_days,
-                            (int) $sch->ph_days,
-                            (int) $sch->permit_days,
-                            (int) $sch->alpha_days,
-                            0, // sakit_days
-                            (int) $sch->leave_days,
-                            (int) $sch->late_days,
-                            (int) $sch->work_days,
-                            (int) $sch->total_days,
-                        ];
-                    }
-
-                    return $data;
-                }
-
-                public function headings(): array {
-                    return [
-                        'NIP', 
-                        'Nama Karyawan', 
-                        'Departemen', 
-                        'Sub Departemen', 
-                        'Grade', 
-                        'Libur', 
-                        'PH', 
-                        'Izin', 
-                        'Alfa', 
-                        'Sakit', 
-                        'Cuti', 
-                        'Terlambat', 
-                        'Masuk', 
-                        'Total Hari'
-                    ];
-                }
-            },
+            new MyScheduleExport(
+                $period,
+                $selectedIds,
+                $search,
+                $departmentId,
+                $subDepartment,
+                $grade
+            ),
             $fileName
         );
     }
-
-    
 }

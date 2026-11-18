@@ -5,8 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Employee;
 use Illuminate\Http\Request;
 use App\Exports\PivotReportExport; 
-
 use Maatwebsite\Excel\Facades\Excel;
+
 class PivotReportController extends Controller
 {
     /**
@@ -33,7 +33,13 @@ class PivotReportController extends Controller
             });
         }
 
-        // 2. Filter Master Data (Departemen, Sub Dept, POS, Grade, Skema)
+        // 2. Filter Periode (Jika diperlukan relasi ke tabel periode atau schedule)
+        if ($request->has('periode') && !empty($request->periode)) {
+            $periode = $request->periode;
+            // Tambahkan query filter periode di sini jika tabel schedule/attendance terikat dengan periode_code
+        }
+
+        // 3. Filter Master Data (Departemen, Sub Dept, POS, Grade, Skema)
         if ($request->has('departemen') && !empty($request->departemen)) {
             $dept = $request->departemen;
             $query->whereHas('department', function ($q) use ($dept) {
@@ -67,17 +73,34 @@ class PivotReportController extends Controller
             $query->whereHas('workScheduleScheme', function ($q) use ($skema) {
                 $q->where('name', $skema)->orWhere('code', $skema)->orWhere('id', $skema);
             });
+
+        }
+// Filter Rentang Tanggal berdasarkan tabel attendance_log_details
+        if ($request->has('start_date') && !empty($request->start_date)) {
+            $startDate = $request->start_date; 
+            $query->whereHas('attendanceLogDetails', function($q) use ($startDate) {
+                 $q->whereDate('date', '>=', $startDate);
+             });
+        }
+        
+        if ($request->has('end_date') && !empty($request->end_date)) {
+            $endDate = $request->end_date;
+            $query->whereHas('attendanceLogDetails', function($q) use ($endDate) {
+                 $q->whereDate('date', '<=', $endDate);
+            });
         }
 
-        // 3. Paginate Server-Side
-        $perPage = (int) $request->input('per_page', 10);
+
+
+        // 4. Paginate Server-Side
+        $perPage = (int) $request->input('per_page', 25);
         $paginated = $query->latest()->paginate($perPage);
 
-        // 4. Map Data Response (Termasuk menyambungkan employee_id)
+        // 5. Map Data Response
         $mappedItems = collect($paginated->items())->map(function ($emp) {
             return [
                 'id'             => (string) $emp->id,
-                'employee_id'    => $emp->employee_id ?? '-', // 👈 ID Karyawan Kustom (EMP-001)
+                'employee_id'    => $emp->employee_id ?? '-',
                 'nip'            => $emp->nip ?? '-',
                 'nama'           => $emp->full_name ?? '-',
                 'departemen'     => $emp->department?->name ?? '-',
@@ -110,21 +133,22 @@ class PivotReportController extends Controller
         ]);
     }
 
-
-
-    public function export(Request $request)
+ public function export(Request $request)
     {
-        $search  = $request->query('search');
-        $dept    = $request->query('departemen');
-        $subDept = $request->query('sub_departemen');
-        $pos     = $request->query('pos');
-        $grade   = $request->query('grade');
-        $skema   = $request->query('skema');
+        $search     = $request->query('search');
+        $periode    = $request->query('periode');
+        $startDate  = $request->query('start_date'); // 👈 Tangkap start_date
+        $endDate    = $request->query('end_date');   // 👈 Tangkap end_date
+        $dept       = $request->query('departemen');
+        $subDept    = $request->query('sub_departemen');
+        $pos        = $request->query('pos');
+        $grade      = $request->query('grade');
+        $skema      = $request->query('skema');
 
         $fileName = 'laporan-pivot-' . date('Y-m-d') . '.xlsx';
 
         return Excel::download(
-            new PivotReportExport($search, $dept, $subDept, $pos, $grade, $skema),
+            new PivotReportExport($search, $periode, $startDate, $endDate, $dept, $subDept, $pos, $grade, $skema),
             $fileName
         );
     }

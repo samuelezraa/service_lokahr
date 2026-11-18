@@ -31,7 +31,7 @@ class SubDepartmentController extends Controller
             $query->where('is_active', $status);
         }
 
-        $perPage = $request->input('per_page', 10);
+        $perPage = $request->input('per_page', 25);
         $subDepartments = $query->latest()->paginate($perPage);
 
         return response()->json([

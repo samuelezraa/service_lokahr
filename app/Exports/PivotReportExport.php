@@ -9,7 +9,10 @@ use Maatwebsite\Excel\Concerns\WithHeadings;
 class PivotReportExport implements FromArray, WithHeadings
 {
     protected ?string $search;
+    protected ?string $periode;
     protected ?string $dept;
+    protected ?string $startDate; // 👈 Tambahkan ini
+    protected ?string $endDate;
     protected ?string $subDept;
     protected ?string $pos;
     protected ?string $grade;
@@ -17,6 +20,9 @@ class PivotReportExport implements FromArray, WithHeadings
 
     public function __construct(
         ?string $search = null,
+        ?string $periode = null,
+        ?string $startDate = null, // 👈 Tambahkan ini
+        ?string $endDate = null,   
         ?string $dept = null,
         ?string $subDept = null,
         ?string $pos = null,
@@ -24,6 +30,9 @@ class PivotReportExport implements FromArray, WithHeadings
         ?string $skema = null
     ) {
         $this->search  = $search;
+        $this->periode = $periode;
+        $this->startDate = $startDate; // 👈 Assign ini
+        $this->endDate   = $endDate;
         $this->dept    = $dept;
         $this->subDept = $subDept;
         $this->pos     = $pos;
@@ -41,7 +50,6 @@ class PivotReportExport implements FromArray, WithHeadings
             'workScheduleScheme'
         ])->where('is_active', true);
 
-        // 1. Search Global
         if (!empty($this->search)) {
             $search = $this->search;
             $query->where(function ($q) use ($search) {
@@ -51,7 +59,6 @@ class PivotReportExport implements FromArray, WithHeadings
             });
         }
 
-        // 2. Filter Departemen
         if (!empty($this->dept)) {
             $dept = $this->dept;
             $query->whereHas('department', function ($q) use ($dept) {
@@ -59,7 +66,6 @@ class PivotReportExport implements FromArray, WithHeadings
             });
         }
 
-        // 3. Filter Sub Departemen
         if (!empty($this->subDept)) {
             $subDept = $this->subDept;
             $query->whereHas('subDepartment', function ($q) use ($subDept) {
@@ -67,7 +73,6 @@ class PivotReportExport implements FromArray, WithHeadings
             });
         }
 
-        // 4. Filter POS
         if (!empty($this->pos)) {
             $pos = $this->pos;
             $query->whereHas('position', function ($q) use ($pos) {
@@ -75,7 +80,6 @@ class PivotReportExport implements FromArray, WithHeadings
             });
         }
 
-        // 5. Filter Grade
         if (!empty($this->grade)) {
             $grade = $this->grade;
             $query->whereHas('grade', function ($q) use ($grade) {
@@ -83,11 +87,26 @@ class PivotReportExport implements FromArray, WithHeadings
             });
         }
 
-        // 6. Filter Skema
         if (!empty($this->skema)) {
             $skema = $this->skema;
             $query->whereHas('workScheduleScheme', function ($q) use ($skema) {
                 $q->where('name', $skema)->orWhere('code', $skema)->orWhere('id', $skema);
+            });
+        }
+
+        if (!empty($this->skema)) {
+            $skema = $this->skema;
+            $query->whereHas('workScheduleScheme', function ($q) use ($skema) {
+                $q->where('name', $skema)->orWhere('code', $skema)->orWhere('id', $skema);
+            });
+        }
+
+       if (!empty($this->startDate) && !empty($this->endDate)) {
+            $startDate = $this->startDate;
+            $endDate = $this->endDate;
+            $query->whereHas('attendanceLogDetails', function($q) use ($startDate, $endDate) {
+                $q->whereDate('date', '>=', $startDate)
+                  ->whereDate('date', '<=', $endDate);
             });
         }
 
@@ -96,22 +115,22 @@ class PivotReportExport implements FromArray, WithHeadings
 
         foreach ($employees as $emp) {
             $data[] = [
-                $emp->employee_id ?? '-', // 👈 ID Karyawan Kustom (EMP-001)
-                $emp->nip ?? '-',         // 👈 NIP Karyawan
+                $emp->employee_id ?? '-',
+                $emp->nip ?? '-',
                 $emp->full_name ?? '-',
                 $emp->department?->name ?? '-',
                 $emp->subDepartment?->name ?? '-',
                 $emp->position?->title ?? $emp->position?->name ?? '-',
                 $emp->grade?->name ?? '-',
                 $emp->workScheduleScheme?->name ?? $emp->workScheduleScheme?->code ?? '5-2',
-                22, // masuk
-                8,  // libur
-                1,  // ph
-                0,  // izin
-                0,  // alfa
-                0,  // sakit
-                0,  // cuti
-                0,  // terlambat
+                22,
+                8,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
             ];
         }
 

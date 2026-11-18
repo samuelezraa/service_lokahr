@@ -50,7 +50,7 @@ class ScheduleController extends Controller
             $query->where('is_active', $status);
         }
 
-        $perPage = $request->input('per_page', 10);
+        $perPage = $request->input('per_page', 25);
         $schedules = $query->latest()->paginate($perPage);
 
         // 🟢 MAPPING: Ambil employee_id asli karyawan (EMP-001) dari relasi 'employee'

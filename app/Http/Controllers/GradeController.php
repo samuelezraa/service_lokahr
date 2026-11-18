@@ -26,7 +26,7 @@ class GradeController extends Controller
             $query->where('is_active', $status);
         }
 
-        $perPage = $request->input('per_page', 10);
+        $perPage = $request->input('per_page', 25);
         
         // Urutkan berdasarkan level tertinggi ke terendah, lalu paginate
         $grades = $query->orderBy('level', 'desc')->paginate($perPage);

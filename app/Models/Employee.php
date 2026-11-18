@@ -33,10 +33,12 @@ class Employee extends Model
         'employee_password',
     ];
 
-    protected $casts = [
-        'join_date'  => 'date:d-m-Y',
-        'birth_date' => 'date:d-m-Y',
-        'is_active'  => 'boolean',
+  protected $casts = [
+        'join_date'            => 'date:d-m-Y',
+        'birth_date'           => 'date:d-m-Y',
+        'age_years'            => 'integer',
+        'work_duration_months' => 'integer',
+        'is_active'            => 'boolean',
     ];
 
     /**
@@ -102,4 +104,16 @@ class Employee extends Model
     {
         return $this->belongsTo(WorkScheduleScheme::class);
     }
+
+    
+ /**
+     * Relasi ke AttendanceLogDetail berdasarkan NIP atau Employee ID
+     */
+    public function attendanceLogDetails()
+    {
+        return $this->hasMany(AttendanceLogDetail::class, 'nip', 'nip');
+        // Catatan: Jika relasi di tabel attendance_log_details menggunakan kolom 'nip', 
+        // pastikan parameter kedua dan ketiga sesuai dengan kolom penghubungnya di database.
+    }
+
 }

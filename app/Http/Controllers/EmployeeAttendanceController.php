@@ -8,7 +8,7 @@ use Illuminate\Http\Request;
 
 class EmployeeAttendanceController extends Controller
 {
-    public function index(Request $request)
+   public function index(Request $request)
     {
         $period  = $request->query('period');
         $search  = $request->query('search');
@@ -19,7 +19,13 @@ class EmployeeAttendanceController extends Controller
         $query = EmployeeAttendance::query();
 
         if ($period) {
-            $query->where('period_code', $period);
+            // 🟢 Cek apakah period yang dikirim adalah ID numerik atau kode teks (misal: '2026-10')
+            // Jika berupa ID master periode, kita ambil code periodenya terlebih dahulu jika diperlukan,
+            // atau gunakan pengecekan ganda agar mencakup period_code maupun relasi terkait.
+            $query->where(function($q) use ($period) {
+                $q->where('period_code', $period)
+                  ->orWhere('period_code', 'like', "%{$period}%");
+            });
         }
 
         if ($search) {
@@ -40,6 +46,8 @@ class EmployeeAttendanceController extends Controller
         }
 
         $paginated = $query->paginate($perPage);
+
+        // ... sisa kodenya tetap sama ...
 
        $mappedItems = collect($paginated->items())->map(function ($item) {
             return [
