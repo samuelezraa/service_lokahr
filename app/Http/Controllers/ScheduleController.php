@@ -186,33 +186,29 @@ class ScheduleController extends Controller
         ]);
     }
 
-    public function export(Request $request)
+   public function export(Request $request)
     {
         $selectedIds = $request->query('selectedIds');
         $idsArray = $selectedIds ? explode(',', $selectedIds) : [];
 
-        return Excel::download(new ScheduleExport($idsArray), 'Jam_Kerja_Skema_5-2_' . date('Y-m-d') . '.xlsx');
-    }
+        $filters = [
+            'search'            => $request->query('search'),
+            'department_id'     => $request->query('department_id'),
+            'sub_department_id' => $request->query('sub_department_id'),
+            'status'            => $request->query('status'),
+        ];
 
-    public function import(Request $request)
-    {
-        $request->validate([
-            'file' => 'required|mimes:xlsx,xls,csv'
-        ]);
-
-        Excel::import(new ScheduleImport, $request->file('file'));
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Data jam kerja berhasil diimpor.'
-        ]);
+        return Excel::download(
+            new ScheduleExport($idsArray, $filters),
+            'Jam_Kerja_Skema_5-2_' . date('Y-m-d') . '.csv'
+        );
     }
 
     public function downloadSample()
     {
         return Excel::download(
             new ScheduleSampleExport(),
-            'Sample_Import_Jam_Kerja_Skema_5-2.xlsx'
+            'Sample_Import_Jam_Kerja_Skema_5-2.csv'
         );
     }
 }

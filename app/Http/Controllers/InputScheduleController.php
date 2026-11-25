@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Schedule;
 use App\Models\ScheduleDetail;
+use App\Models\ScheduleDailyDetail;
 use App\Models\Employee;
 use App\Models\Period;
 use Illuminate\Http\Request;
@@ -12,6 +13,7 @@ use App\Exports\InputScheduleExport;
 use App\Exports\InputScheduleSampleExport;
 use App\Exports\MyScheduleExport;
 use App\Imports\InputScheduleImport;
+use App\Exports\EmployeeScheduleDetailExport;
 use Maatwebsite\Excel\Facades\Excel;
 
 class InputScheduleController extends Controller
@@ -140,10 +142,9 @@ class InputScheduleController extends Controller
     /**
      * 2. GET /api/schedule/input-schedule/edit/{id}
      * Mendukung rentang tanggal lintas bulan berdasarkan Master Period (start_date s.d. end_date)
-     */
-    public function showDetail(Request $request, $id)
+     */public function showDetail(Request $request, $id)
     {
-        $schedule = Schedule::with(['employee', 'department', 'subDepartment', 'scheduleDetails'])
+        $schedule = Schedule::with(['employee', 'department', 'subDepartment', 'scheduleDetails', 'dailyDetails'])
             ->findOrFail($id);
 
         $periodCode = $schedule->period_code ?? $request->query('period');
@@ -165,6 +166,9 @@ class InputScheduleController extends Controller
         }
 
         $details = $schedule->scheduleDetails->keyBy('day_of_week');
+        $dailyDetails = $schedule->dailyDetails->keyBy(function ($item) {
+            return Carbon::parse($item->date)->format('Y-m-d');
+        });
 
         $actualAttendances = \App\Models\EmployeeAttendanceDetail::whereHas('employeeAttendance', function ($q) use ($schedule, $periodCode) {
             $q->where('nip', trim($schedule->nip))
@@ -186,20 +190,25 @@ class InputScheduleController extends Controller
             $dayOfWeekEnglish = strtolower($cursor->format('l'));
 
             $detail = $details->get($dayOfWeekEnglish);
+            $dailyDetail = $dailyDetails->get($dateStr);
             $actualLog = $actualAttendances->get($dateStr);
 
             $isWeekend = ($dayOfWeekIndex === 0 || $dayOfWeekIndex === 6);
-            $isLibur = $detail ? ($detail->is_day_off || !$detail->is_active) : $isWeekend;
+            $isLibur = $detail ? (bool) ($detail->is_active === false) : $isWeekend;
 
-            $status = $isLibur ? 'Libur' : 'Berangkat';
-            $checkIn = $detail ? $detail->check_in_time : ($isWeekend ? '00:00:00' : '08:00:00');
-            $checkOut = $detail ? $detail->check_out_time : ($isWeekend ? '00:00:00' : '17:00:00');
+            $defaultStatus = $isLibur ? 'Libur' : 'Berangkat';
+            $status = $dailyDetail?->attendance_status ?? $defaultStatus;
+
+            $checkIn = $dailyDetail?->scheduled_check_in
+                ?? ($detail ? $detail->check_in_time : ($isWeekend ? '00:00:00' : '08:00:00'));
+            $checkOut = $dailyDetail?->scheduled_check_out
+                ?? ($detail ? $detail->check_out_time : ($isWeekend ? '00:00:00' : '17:00:00'));
 
             $actualCheckIn = $actualLog ? ($actualLog->actual_check_in ?? '00:00:00') : '00:00:00';
             $actualCheckOut = $actualLog ? ($actualLog->actual_check_out ?? '00:00:00') : '00:00:00';
 
             $scheduleList[] = [
-                'id'                => $detail ? (string) $detail->id : 'temp_' . $no,
+                'id'                => $dailyDetail ? (string) $dailyDetail->id : ($detail ? (string) $detail->id : 'temp_' . $no),
                 'no'                => $no,
                 'dayName'           => $dayName,
                 'date'              => $dateStr,
@@ -209,7 +218,7 @@ class InputScheduleController extends Controller
                 'scheduledCheckOut' => $checkOut,
                 'actualCheckIn'     => $actualCheckIn,
                 'actualCheckOut'    => $actualCheckOut,
-                'notes'             => $actualLog?->notes ?? ($detail?->annual_event_name ?? '-'),
+                'notes'             => $dailyDetail?->notes ?? ($actualLog?->notes ?? ($detail?->annual_event_name ?? '-')),
                 'ref'               => $schedule->ref ?? $periodCode,
             ];
 
@@ -235,10 +244,10 @@ class InputScheduleController extends Controller
                     'totalPeriodDays' => $totalDaysInPeriod,
                     'totalWorkDays'   => collect($scheduleList)->where('attendanceStatus', 'Berangkat')->count(),
                     'totalOffDays'    => collect($scheduleList)->where('attendanceStatus', 'Libur')->count(),
-                    'totalPhDays'     => $schedule->ph_days,
-                    'totalPermitDays' => $schedule->permit_days,
+                    'totalPhDays'     => collect($scheduleList)->where('attendanceStatus', 'PH')->count(),
+                    'totalPermitDays' => collect($scheduleList)->where('attendanceStatus', 'Izin')->count(),
                     'totalAlphaDays'  => $schedule->alpha_days,
-                    'totalLeaveDays'  => $schedule->leave_days,
+                    'totalLeaveDays'  => collect($scheduleList)->where('attendanceStatus', 'Cuti')->count(),
                     'totalLateDays'   => $schedule->late_days,
                 ]
             ],
@@ -246,9 +255,6 @@ class InputScheduleController extends Controller
         ]);
     }
 
-    /**
-     * 3. PUT /api/schedule/input-schedule/edit/{id}
-     */
     public function updateDetail(Request $request, $id)
     {
         $schedule = Schedule::findOrFail($id);
@@ -258,35 +264,51 @@ class InputScheduleController extends Controller
         ]);
 
         $scheduleList = $validated['scheduleList'];
-        $workDays = 0;
-        $offDays = 0;
+        $workDays   = 0;
+        $offDays    = 0;
+        $phDays     = 0;
+        $permitDays = 0;
+        $leaveDays  = 0;
 
         foreach ($scheduleList as $item) {
-            $dayOfWeek = $item['day_of_week'] ?? strtolower(Carbon::parse($item['date'])->format('l'));
-            $isLibur = ($item['attendanceStatus'] === 'Libur');
+            $parsedDate = Carbon::parse($item['date']);
+            $dateStr    = $parsedDate->format('Y-m-d');
+            $dayOfWeek  = $item['day_of_week'] ?? strtolower($parsedDate->format('l'));
+            $status     = $item['attendanceStatus'] ?? 'Berangkat';
 
-            if ($isLibur) {
+            if ($status === 'Libur') {
                 $offDays++;
+            } elseif ($status === 'PH') {
+                $phDays++;
+            } elseif ($status === 'Izin') {
+                $permitDays++;
+            } elseif ($status === 'Cuti') {
+                $leaveDays++;
             } else {
                 $workDays++;
             }
 
-            ScheduleDetail::updateOrCreate(
+            \App\Models\ScheduleDailyDetail::updateOrCreate(
                 [
                     'schedule_id' => $schedule->id,
-                    'day_of_week' => $dayOfWeek,
+                    'date'        => $dateStr,
                 ],
                 [
-                    'check_in_time'  => $item['scheduledCheckIn'] ?? '00:00:00',
-                    'check_out_time' => $item['scheduledCheckOut'] ?? '00:00:00',
-                    'is_active'      => !$isLibur,
+                    'day_of_week'         => $dayOfWeek,
+                    'attendance_status'   => $status,
+                    'scheduled_check_in'  => $item['scheduledCheckIn'] ?? '00:00:00',
+                    'scheduled_check_out' => $item['scheduledCheckOut'] ?? '00:00:00',
+                    'notes'               => (isset($item['notes']) && $item['notes'] !== '-') ? $item['notes'] : null,
                 ]
             );
         }
 
         $schedule->update([
-            'work_days' => $workDays,
-            'off_days'  => $offDays,
+            'work_days'   => $workDays,
+            'off_days'    => $offDays,
+            'ph_days'     => $phDays,
+            'permit_days' => $permitDays,
+            'leave_days'  => $leaveDays,
         ]);
 
         return response()->json([
@@ -385,7 +407,7 @@ class InputScheduleController extends Controller
         $subDeptId     = $request->query('sub_department_id');
         $status        = $request->query('status');
 
-        $fileName = 'schedule-period-' . ($period ?? 'all') . '.xlsx';
+        $fileName = 'schedule-period-' . ($period ?? 'all') . '.csv';
 
         return Excel::download(
             new InputScheduleExport($period, $search, $departmentId, $subDeptId, $status),
@@ -401,7 +423,7 @@ class InputScheduleController extends Controller
         $period = $request->query('period')
             ?? Period::where('is_active', true)->orderBy('start_date')->value('code')
             ?? date('Y-m');
-        $fileName = "sample-template-import-schedule-{$period}.xlsx";
+        $fileName = "sample-template-import-schedule-{$period}.csv";
 
         return Excel::download(new InputScheduleSampleExport($period), $fileName);
     }
@@ -424,7 +446,8 @@ class InputScheduleController extends Controller
                   ->orWhere('employee_name', 'like', "%{$search}%")
                   ->orWhereHas('employee', function ($empQ) use ($search) {
                       $empQ->where('full_name', 'like', "%{$search}%")
-                           ->orWhere('nip', 'like', "%{$search}%");
+                           ->orWhere('nip', 'like', "%{$search}%")
+                           ->orWhere('employee_id', 'like', "%{$search}%");
                   });
             });
         }
@@ -457,9 +480,10 @@ class InputScheduleController extends Controller
         $mappedItems = collect($paginated->items())->map(function ($sch) use ($period) {
             return [
                 'id'             => (string) $sch->id,
+                'employee_id'    => $sch->employee?->employee_id ?? '-',
                 'period'         => $period,
-                'nip'            => $sch->nip ?? $sch->employee?->nip ?? '-',
-                'name'           => $sch->employee_name ?? $sch->employee?->full_name ?? '-',
+                'nip'            => $sch->employee?->nip ?? $sch->nip ?? '-',
+                'name'           => $sch->employee?->full_name ?? $sch->employee_name ?? '-',
                 'department_id'  => $sch->department_id,
                 'department'     => $sch->department_name ?? $sch->department?->name ?? '-',
                 'sub_department' => $sch->sub_department_name ?? $sch->subDepartment?->name ?? '-',
@@ -503,7 +527,7 @@ class InputScheduleController extends Controller
         $subDepartment = $request->input('sub_department');
         $grade         = $request->input('grade');
 
-        $fileName = "rekap-jadwalku-period-{$period}.xlsx";
+        $fileName = "rekap-jadwalku-period-{$period}.csv";
 
         return Excel::download(
             new MyScheduleExport(
@@ -514,6 +538,33 @@ class InputScheduleController extends Controller
                 $subDepartment,
                 $grade
             ),
+            $fileName
+        );
+    }
+
+
+
+    /**
+     * 10. GET /api/schedule/jadwalku/{id}/export
+     * Export jadwal & rekapitulasi harian per karyawan
+     */
+    public function exportEmployeeSchedule(Request $request, $id)
+    {
+        $schedule = Schedule::with(['employee', 'department', 'subDepartment', 'scheduleDetails'])
+            ->findOrFail($id);
+
+        $periodCode = $request->query('period') ?: ($schedule->period_code ?? 'periode');
+        $empCode    = preg_replace('/[^A-Za-z0-9_-]/', '_', (string) (
+            $schedule->employee?->employee_id
+            ?? $schedule->nip
+            ?? $schedule->employee_id
+            ?? $schedule->id
+        ));
+
+        $fileName = "rekap-jadwal-{$empCode}-period-{$periodCode}.csv";
+
+        return Excel::download(
+            new EmployeeScheduleDetailExport($schedule, $periodCode),
             $fileName
         );
     }

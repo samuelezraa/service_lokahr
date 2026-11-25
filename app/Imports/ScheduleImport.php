@@ -42,43 +42,69 @@ class ScheduleImport implements ToArray, WithHeadingRow
         foreach ($array as $index => $row) {
             $rowNum = $index + 2;
 
-            $nip = $row['nip'] ?? $row['id_karyawan_nip'] ?? $row['employee_id'] ?? null;
-            if (empty($nip)) {
-                continue;
+            // 1. Validasi ID Karyawan
+            $nip = trim((string)($row['nip'] ?? $row['id_karyawan'] ?? $row['id_karyawan_nip'] ?? $row['employee_id'] ?? ''));
+            if ($nip === '') {
+                throw new \Exception("Baris {$rowNum}: ID Karyawan wajib diisi.");
             }
 
-            $employee = Employee::where('nip', (string)$nip)->first();
+            $employee = Employee::where('nip', $nip)
+                ->orWhere('employee_id', $nip)
+                ->first();
+
             if (!$employee) {
-                throw new \Exception("Baris {$rowNum}: Karyawan dengan NIP '{$nip}' tidak ditemukan di database.");
+                throw new \Exception("Baris {$rowNum}: Karyawan dengan ID Karyawan '{$nip}' tidak ditemukan di database.");
             }
 
-            // Department Resolver
-            $deptVal = $row['departemen'] ?? $row['department'] ?? null;
-            $departmentId = $employee->department_id;
-            $departmentName = $employee->department?->name;
-            if (!empty($deptVal)) {
-                $deptObj = is_numeric($deptVal) 
-                    ? Department::find($deptVal) 
-                    : Department::where('name', $deptVal)->first();
-                if ($deptObj) {
-                    $departmentId = $deptObj->id;
-                    $departmentName = $deptObj->name;
-                }
+            // 2. Validasi Nama Karyawan
+            $inputName = trim((string)($row['nama_karyawan'] ?? $row['employee_name'] ?? $row['name'] ?? ''));
+            $dbEmployeeName = trim((string)($employee->full_name ?? $employee->name ?? ''));
+
+            if ($inputName === '') {
+                throw new \Exception("Baris {$rowNum}: Nama Karyawan wajib diisi.");
             }
 
-            // Sub Department Resolver
-            $subDeptVal = $row['sub_departemen'] ?? $row['sub_department'] ?? null;
-            $subDepartmentId = $employee->sub_department_id;
-            $subDepartmentName = $employee->subDepartment?->name;
-            if (!empty($subDeptVal)) {
-                $subDeptObj = is_numeric($subDeptVal) 
-                    ? SubDepartment::find($subDeptVal) 
-                    : SubDepartment::where('name', $subDeptVal)->first();
-                if ($subDeptObj) {
-                    $subDepartmentId = $subDeptObj->id;
-                    $subDepartmentName = $subDeptObj->name;
-                }
+            if ($dbEmployeeName === '') {
+                throw new \Exception("Baris {$rowNum}: Data nama karyawan untuk ID '{$nip}' tidak ditemukan di database.");
             }
+
+            if (mb_strtolower($inputName) !== mb_strtolower($dbEmployeeName)) {
+                throw new \Exception("Baris {$rowNum}: Nama Karyawan '{$inputName}' tidak sesuai dengan data ID Karyawan '{$nip}' ({$dbEmployeeName}).");
+            }
+
+            // 3. Validasi Departemen
+            $deptVal = trim((string)($row['departemen'] ?? $row['department'] ?? ''));
+            if ($deptVal === '') {
+                throw new \Exception("Baris {$rowNum}: Departemen wajib diisi.");
+            }
+
+            $deptObj = is_numeric($deptVal)
+                ? Department::find($deptVal)
+                : Department::whereRaw('LOWER(name) = ?', [mb_strtolower($deptVal)])->first();
+
+            if (!$deptObj) {
+                throw new \Exception("Baris {$rowNum}: Departemen '{$deptVal}' tidak ditemukan di database.");
+            }
+
+            $departmentId = $deptObj->id;
+            $departmentName = $deptObj->name;
+
+            // 4. Validasi Sub Departemen
+            $subDeptVal = trim((string)($row['sub_departemen'] ?? $row['sub_department'] ?? ''));
+            if ($subDeptVal === '') {
+                throw new \Exception("Baris {$rowNum}: Sub Departemen wajib diisi.");
+            }
+
+            $subDeptObj = is_numeric($subDeptVal)
+                ? SubDepartment::find($subDeptVal)
+                : SubDepartment::whereRaw('LOWER(name) = ?', [mb_strtolower($subDeptVal)])->first();
+
+            if (!$subDeptObj) {
+                throw new \Exception("Baris {$rowNum}: Sub Departemen '{$subDeptVal}' tidak ditemukan di database.");
+            }
+
+            $subDepartmentId = $subDeptObj->id;
+            $subDepartmentName = $subDeptObj->name;
 
             $statusRaw = $row['status'] ?? 'Aktif';
             $isActive = (strtolower((string)$statusRaw) === 'aktif' || $statusRaw == 1 || strtolower((string)$statusRaw) === 'true');
@@ -87,8 +113,8 @@ class ScheduleImport implements ToArray, WithHeadingRow
             $schedule = Schedule::updateOrCreate(
                 ['employee_id' => $employee->id],
                 [
-                    'nip'                 => (string)$nip,
-                    'employee_name'       => $employee->full_name,
+                    'nip'                 => $nip,
+                    'employee_name'       => $dbEmployeeName,
                     'department_id'       => $departmentId,
                     'department_name'     => $departmentName,
                     'sub_department_id'   => $subDepartmentId,

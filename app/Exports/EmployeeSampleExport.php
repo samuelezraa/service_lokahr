@@ -21,8 +21,8 @@ class EmployeeSampleExport implements FromArray, WithHeadings, WithCustomCsvSett
     {
         return [
             [
-                'EMP001',
-                '12344567290',
+                '1234456729',
+                '1010',
                 'Zidane',
                 'zidane@example.com',
                 '081236567890',

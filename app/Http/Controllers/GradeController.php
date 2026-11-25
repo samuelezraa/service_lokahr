@@ -47,11 +47,20 @@ class GradeController extends Controller
 
     public function store(Request $request)
     {
+        $request->merge([
+            'code' => is_string($request->input('code'))
+                ? strtoupper(trim($request->input('code')))
+                : $request->input('code'),
+        ]);
+
         $validated = $request->validate([
-            'code'      => 'required|string|unique:grades,code',
+            'code'      => ['required', 'string', 'regex:/^GR\d{1,4}$/', 'unique:grades,code'],
             'name'      => 'required|string|max:255',
             'level'     => 'required|integer|min:1',
             'is_active' => 'boolean',
+        ], [
+            'code.regex'  => 'Format ID Grade harus diawali GR dan diikuti 1 sampai 4 digit angka (contoh: GR01).',
+            'code.unique' => 'ID Grade sudah digunakan, silakan gunakan ID lain.',
         ]);
 
         $grade = Grade::create($validated);

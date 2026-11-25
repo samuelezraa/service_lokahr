@@ -2,15 +2,16 @@
 
 namespace App\Imports;
 
-use App\Models\Schedule;
-use App\Models\ScheduleDetail;
-use App\Models\Employee;
 use App\Models\Department;
-use App\Models\SubDepartment;
+use App\Models\Employee;
 use App\Models\Period;
+use App\Models\Schedule;
+use App\Models\ScheduleDailyDetail;
+use App\Models\ScheduleDetail;
+use App\Models\SubDepartment;
+use Carbon\Carbon;
 use Maatwebsite\Excel\Concerns\ToArray;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
-use Carbon\Carbon;
 
 class InputScheduleImport implements ToArray
 {
@@ -37,9 +38,6 @@ class InputScheduleImport implements ToArray
         }
     }
 
-    /**
-     * Petakan daftar angka tanggal di header Excel ke objek Carbon berdasarkan master Period
-     */
     private function mapHeaderDaysToDates(string $periodCode, array $dateColumns): array
     {
         $periodModel = Period::where('code', $periodCode)->first();
@@ -52,8 +50,8 @@ class InputScheduleImport implements ToArray
         $mappedDates = [];
 
         if ($periodModel) {
-            $cursor = Carbon::parse($periodModel->start_date);
-            $endDate = Carbon::parse($periodModel->end_date);
+            $cursor           = Carbon::parse($periodModel->start_date);
+            $endDate          = Carbon::parse($periodModel->end_date);
             $periodDatesByDay = [];
 
             while ($cursor->lte($endDate)) {
@@ -73,7 +71,6 @@ class InputScheduleImport implements ToArray
             return $mappedDates;
         }
 
-        // Fallback jika memakai format YYYY-MM biasa
         if (str_contains($periodCode, '-')) {
             [$year, $month] = explode('-', $periodCode);
             foreach ($dateColumns as $colIndex => $dayNumber) {
@@ -92,15 +89,17 @@ class InputScheduleImport implements ToArray
             return;
         }
 
-        // Baris index 1 (baris ke-2 Excel) berisi angka tanggal mulai kolom index 6 (G)
+        // Baris index 1 (baris ke-2 Excel) berisi nomor tanggal mulai kolom G (index 6)
         $dateHeaderRow = $rows[1];
-        $dateColumns = [];
+        $dateColumns   = [];
         for ($col = 6; $col < count($dateHeaderRow); $col++) {
             $dayNum = trim((string) ($dateHeaderRow[$col] ?? ''));
             if ($dayNum !== '' && is_numeric($dayNum)) {
                 $dateColumns[$col] = (int) $dayNum;
             }
         }
+
+        $hasDailyDetailModel = class_exists(ScheduleDailyDetail::class);
 
         // Data karyawan dimulai pada baris index 2 (baris ke-3 Excel)
         for ($r = 2; $r < count($rows); $r++) {
@@ -117,37 +116,35 @@ class InputScheduleImport implements ToArray
                 continue;
             }
 
-            $periodCode = $this->overridePeriod ?: ($periodCell !== '' ? $periodCell : date('Y-m'));
+            $periodCode  = $this->overridePeriod ?: ($periodCell !== '' ? $periodCell : date('Y-m'));
             $mappedDates = $this->mapHeaderDaysToDates($periodCode, $dateColumns);
 
             $employee = Employee::with(['department', 'subDepartment'])
                 ->where('nip', $nip)
                 ->first();
 
-            // Resolve Department
-            $departmentId = $employee?->department_id;
+            $departmentId   = $employee?->department_id;
             $departmentName = $employee?->department?->name;
             if ($deptVal !== '' && $deptVal !== '-') {
                 $deptObj = is_numeric($deptVal)
                     ? Department::find($deptVal)
                     : Department::where('name', $deptVal)->first();
                 if ($deptObj) {
-                    $departmentId = $deptObj->id;
+                    $departmentId   = $deptObj->id;
                     $departmentName = $deptObj->name;
                 } else {
                     $departmentName = $deptVal;
                 }
             }
 
-            // Resolve Sub Department
-            $subDepartmentId = $employee?->sub_department_id;
+            $subDepartmentId   = $employee?->sub_department_id;
             $subDepartmentName = $employee?->subDepartment?->name;
             if ($subDeptVal !== '' && $subDeptVal !== '-') {
                 $subDeptObj = is_numeric($subDeptVal)
                     ? SubDepartment::find($subDeptVal)
                     : SubDepartment::where('name', $subDeptVal)->first();
                 if ($subDeptObj) {
-                    $subDepartmentId = $subDeptObj->id;
+                    $subDepartmentId   = $subDeptObj->id;
                     $subDepartmentName = $subDeptObj->name;
                 } else {
                     $subDepartmentName = $subDeptVal;
@@ -158,13 +155,15 @@ class InputScheduleImport implements ToArray
                 ? $workScheme
                 : ($employee?->work_scheme ?? $employee?->schedule_scheme ?? 'Skema 5-2');
 
-            $workDays = 0;
-            $offDays = 0;
+            $workDays               = 0;
+            $offDays                = 0;
             $dailyScheduleByDayName = [];
+            $dailyEntriesByDate     = [];
 
             foreach ($dateColumns as $colIndex => $dayNumber) {
                 $checkIn = $this->parseExcelTime($row[$colIndex] ?? '00:00:00');
                 $isLibur = ($checkIn === '00:00:00');
+                $checkOut = $isLibur ? '00:00:00' : Carbon::parse($checkIn)->addHours(9)->format('H:i:s');
 
                 if ($isLibur) {
                     $offDays++;
@@ -173,15 +172,23 @@ class InputScheduleImport implements ToArray
                 }
 
                 if (isset($mappedDates[$colIndex])) {
-                    $dayOfWeek = strtolower($mappedDates[$colIndex]->format('l'));
+                    $dateObj   = $mappedDates[$colIndex];
+                    $dayOfWeek = strtolower($dateObj->format('l'));
 
                     if (!isset($dailyScheduleByDayName[$dayOfWeek]) || !$isLibur) {
                         $dailyScheduleByDayName[$dayOfWeek] = [
                             'check_in_time'  => $checkIn,
-                            'check_out_time' => $isLibur ? '00:00:00' : Carbon::parse($checkIn)->addHours(9)->format('H:i:s'),
+                            'check_out_time' => $checkOut,
                             'is_active'      => !$isLibur,
                         ];
                     }
+
+                    $dailyEntriesByDate[$dateObj->format('Y-m-d')] = [
+                        'day_of_week'         => $dayOfWeek,
+                        'attendance_status'   => $isLibur ? 'Libur' : 'Berangkat',
+                        'scheduled_check_in'  => $checkIn,
+                        'scheduled_check_out' => $checkOut,
+                    ];
                 }
             }
 
@@ -215,6 +222,18 @@ class InputScheduleImport implements ToArray
                     ],
                     $detailData
                 );
+            }
+
+            if ($hasDailyDetailModel) {
+                foreach ($dailyEntriesByDate as $dateStr => $entryData) {
+                    ScheduleDailyDetail::updateOrCreate(
+                        [
+                            'schedule_id' => $schedule->id,
+                            'date'        => $dateStr,
+                        ],
+                        $entryData
+                    );
+                }
             }
         }
     }

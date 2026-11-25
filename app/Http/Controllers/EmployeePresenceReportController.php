@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\Department;
+use App\Models\Period;
 use App\Models\AttendanceLogDetail;
 use App\Exports\EmployeePresenceReportExport;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Maatwebsite\Excel\Facades\Excel;
 
@@ -15,38 +17,75 @@ class EmployeePresenceReportController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Department::query();
-
-        // 1. Search Global (Nama Departemen)
-        if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
-            $query->where('name', 'like', "%{$search}%");
-        }
-
-        // 2. Server-Side Pagination
-        $perPage = (int) $request->input('per_page', 25);
-        $paginated = $query->paginate($perPage);
-
+        $search    = $request->input('search');
         $startDate = $request->input('start_date');
         $endDate   = $request->input('end_date');
         $periode   = $request->input('periode');
+        $perPage   = (int) $request->input('per_page', 25);
 
-        // 3. Mapping data & kalkulasi total pax
-        $mappedItems = collect($paginated->items())->map(function ($dept) use ($startDate, $endDate, $periode) {
-            $paxQuery = AttendanceLogDetail::whereHas('employee', function ($q) use ($dept) {
-                $q->where('department_id', $dept->id);
+        // 1. Resolusi Rentang Tanggal (dari Range Tanggal atau Master Period)
+        $effectiveStart = !empty($startDate) ? Carbon::parse($startDate)->format('Y-m-d') : null;
+        $effectiveEnd   = !empty($endDate) ? Carbon::parse($endDate)->format('Y-m-d') : null;
+
+        if (!empty($periode) && (!$effectiveStart || !$effectiveEnd)) {
+            $periodObj = Period::where('code', $periode)
+                ->orWhere('id', $periode)
+                ->first();
+
+            if ($periodObj) {
+                $effectiveStart = $effectiveStart ?? Carbon::parse($periodObj->start_date)->format('Y-m-d');
+                $effectiveEnd   = $effectiveEnd   ?? Carbon::parse($periodObj->end_date)->format('Y-m-d');
+            }
+        }
+
+        $isDateFiltered = (bool) ($effectiveStart || $effectiveEnd || !empty($periode));
+
+        // Helper closure untuk menerapkan filter tanggal ke query AttendanceLogDetail
+        $applyDateFilter = function ($q) use ($effectiveStart, $effectiveEnd, $periode) {
+            if ($effectiveStart && $effectiveEnd) {
+                $q->whereBetween('date', [$effectiveStart, $effectiveEnd]);
+            } elseif ($effectiveStart) {
+                $q->whereDate('date', '>=', $effectiveStart);
+            } elseif ($effectiveEnd) {
+                $q->whereDate('date', '<=', $effectiveEnd);
+            } elseif (!empty($periode)) {
+                $q->where('date', 'like', "{$periode}%");
+            }
+        };
+
+        $query = Department::query();
+
+        // 2. Search Global (Nama Departemen)
+        if (!empty($search)) {
+            $query->where('name', 'like', "%{$search}%");
+        }
+
+        // 3. Filter Departemen yang memiliki log kehadiran pada periode/tanggal terpilih
+        if ($isDateFiltered) {
+            $query->whereHas('employees.attendanceLogDetails', function ($q) use ($applyDateFilter) {
+                $applyDateFilter($q);
+            });
+        }
+
+        $paginated = $query->paginate($perPage);
+// 4. Mapping data & kalkulasi total pax (jumlah karyawan unik berdasarkan NIP)
+        $mappedItems = collect($paginated->items())->map(function ($dept) use ($isDateFiltered, $applyDateFilter) {
+            $paxQuery = AttendanceLogDetail::where(function ($q) use ($dept) {
+                $q->where('department_id', $dept->id)
+                  ->orWhere('department_name', $dept->name)
+                  ->orWhereHas('employee', function ($empQ) use ($dept) {
+                      $empQ->where('department_id', $dept->id);
+                  });
             });
 
-            // 🟢 GUNAKAN KOLOM 'date' (BUKAN 'attendance_date')
-            if (!empty($startDate) && !empty($endDate)) {
-                $paxQuery->whereBetween('date', [$startDate, $endDate]);
-            } elseif (!empty($periode)) {
-                $paxQuery->where('date', 'like', "{$periode}%");
-            }
-
-            $totalPax = $paxQuery->count();
-            if ($totalPax === 0 && empty($startDate) && empty($periode)) {
-                $totalPax = $dept->employees()->where('is_active', true)->count();
+            if ($isDateFiltered) {
+                $applyDateFilter($paxQuery);
+                $totalPax = $paxQuery->distinct('nip')->count('nip');
+            } else {
+                $totalPax = $paxQuery->distinct('nip')->count('nip');
+                if ($totalPax === 0) {
+                    $totalPax = $dept->employees()->where('is_active', true)->count();
+                }
             }
 
             return [
@@ -56,23 +95,33 @@ class EmployeePresenceReportController extends Controller
             ];
         });
 
-        // Hitung Grand Total Pax seluruh departemen
-        $grandTotalPax = Department::all()->sum(function ($dept) use ($startDate, $endDate, $periode) {
-            $paxQuery = AttendanceLogDetail::whereHas('employee', function ($q) use ($dept) {
-                $q->where('department_id', $dept->id);
+        // 5. Hitung Grand Total Pax seluruh departemen sesuai filter aktif
+        $grandTotalQuery = Department::query();
+        if (!empty($search)) {
+            $grandTotalQuery->where('name', 'like', "%{$search}%");
+        }
+        if ($isDateFiltered) {
+            $grandTotalQuery->whereHas('employees.attendanceLogDetails', function ($q) use ($applyDateFilter) {
+                $applyDateFilter($q);
+            });
+        }
+
+        $grandTotalPax = $grandTotalQuery->get()->sum(function ($dept) use ($isDateFiltered, $applyDateFilter) {
+            $paxQuery = AttendanceLogDetail::where(function ($q) use ($dept) {
+                $q->where('department_id', $dept->id)
+                  ->orWhere('department_name', $dept->name)
+                  ->orWhereHas('employee', function ($empQ) use ($dept) {
+                      $empQ->where('department_id', $dept->id);
+                  });
             });
 
-            // 🟢 GUNAKAN KOLOM 'date' (BUKAN 'attendance_date')
-            if (!empty($startDate) && !empty($endDate)) {
-                $paxQuery->whereBetween('date', [$startDate, $endDate]);
-            } elseif (!empty($periode)) {
-                $paxQuery->where('date', 'like', "{$periode}%");
+            if ($isDateFiltered) {
+                $applyDateFilter($paxQuery);
+                return $paxQuery->distinct('nip')->count('nip');
             }
 
-            $cnt = $paxQuery->count();
-            return ($cnt === 0 && empty($startDate) && empty($periode)) 
-                ? $dept->employees()->where('is_active', true)->count() 
-                : $cnt;
+            $cnt = $paxQuery->distinct('nip')->count('nip');
+            return $cnt === 0 ? $dept->employees()->where('is_active', true)->count() : $cnt;
         });
 
         return response()->json([
@@ -100,7 +149,7 @@ class EmployeePresenceReportController extends Controller
         $startDate = $request->query('start_date');
         $endDate   = $request->query('end_date');
 
-        $fileName = 'laporan-kehadiran-karyawan-' . date('Y-m-d') . '.xlsx';
+        $fileName = 'laporan-kehadiran-karyawan-' . date('Y-m-d') . '.csv';
 
         return Excel::download(
             new EmployeePresenceReportExport($search, $periode, $startDate, $endDate),

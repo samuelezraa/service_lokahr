@@ -80,6 +80,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/schedule/jadwalku', [InputScheduleController::class, 'getMySchedule']);
     Route::post('/schedule/jadwalku/export', [InputScheduleController::class, 'exportMySchedule']);
     Route::get('/schedule/input-schedule/weekly-hours', [InputScheduleController::class, 'getWeeklyHours']);
+    Route::get('/schedule/jadwalku/{id}/export', [InputScheduleController::class, 'exportEmployeeSchedule']);
 
     Route::prefix('schedule/input-schedule')->group(function () {
         Route::get('/', [InputScheduleController::class, 'index']);

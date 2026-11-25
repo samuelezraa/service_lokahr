@@ -12,8 +12,8 @@ class ScheduleSampleExport implements FromArray, WithHeadings, ShouldAutoSize
 {
     public function array(): array
     {
-        // Ambil semua karyawan aktif yang memiliki skema kerja 5-2
-        $employees = Employee::with([
+        // Ambil 1 karyawan aktif yang memiliki skema kerja 5-2 sebagai contoh
+        $emp = Employee::with([
             'department',
             'subDepartment',
             'workScheduleScheme',
@@ -25,19 +25,16 @@ class ScheduleSampleExport implements FromArray, WithHeadings, ShouldAutoSize
                   ->orWhere('code', 'like', '%52%');
             })
             ->orderBy('full_name')
-            ->get();
-
-        // Ambil data jadwal yang sudah pernah disetting untuk karyawan tersebut
-        $schedulesByEmployee = Schedule::with('scheduleDetails')
-            ->whereIn('employee_id', $employees->pluck('id'))
-            ->get()
-            ->keyBy('employee_id');
+            ->first();
 
         $days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-        $data = [];
 
-        foreach ($employees as $emp) {
-            $schedule = $schedulesByEmployee->get($emp->id);
+        if ($emp) {
+            $schedule = Schedule::with('scheduleDetails')
+                ->where('employee_id', $emp->id)
+                ->latest('id')
+                ->first();
+
             $details = $schedule ? $schedule->scheduleDetails->keyBy('day_of_week') : collect();
 
             $row = [
@@ -47,7 +44,6 @@ class ScheduleSampleExport implements FromArray, WithHeadings, ShouldAutoSize
                 $emp->subDepartment?->name ?? '-',
             ];
 
-            // Isi dengan jam yang sudah disetting, jika belum ada gunakan default 00:00:00
             foreach ($days as $day) {
                 $dayDetail = $details->get($day);
                 $row[] = ($dayDetail && $dayDetail->is_active && $dayDetail->check_in_time)
@@ -60,28 +56,24 @@ class ScheduleSampleExport implements FromArray, WithHeadings, ShouldAutoSize
 
             $row[] = $schedule ? ($schedule->is_active ? 'Aktif' : 'Non Aktif') : 'Aktif';
 
-            $data[] = $row;
+            return [$row];
         }
 
         // Fallback jika belum ada data karyawan aktif skema 5-2 di database
-        if (empty($data)) {
-            $data[] = [
-                '1001',
-                'Antika Lorien',
-                'IT',
-                'Frontend Engineering',
-                '00:00:00', '00:00:00',
-                '00:00:00', '00:00:00',
-                '00:00:00', '00:00:00',
-                '00:00:00', '00:00:00',
-                '00:00:00', '00:00:00',
-                '00:00:00', '00:00:00',
-                '00:00:00', '00:00:00',
-                'Aktif',
-            ];
-        }
-
-        return $data;
+        return [[
+            '000001001',
+            'John Doe',
+            'IT',
+            'Frontend Engineering',
+            '08:00:00', '17:00:00',
+            '08:00:00', '17:00:00',
+            '08:00:00', '17:00:00',
+            '08:00:00', '17:00:00',
+            '08:00:00', '17:00:00',
+            '00:00:00', '00:00:00',
+            '00:00:00', '00:00:00',
+            'Aktif',
+        ]];
     }
 
     public function headings(): array

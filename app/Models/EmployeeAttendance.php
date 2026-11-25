@@ -4,10 +4,12 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Spatie\Activitylog\LogOptions;
+use Spatie\Activitylog\Traits\LogsActivity;
 
 class EmployeeAttendance extends Model
 {
-    use HasFactory;
+   use HasFactory, LogsActivity;
 
     protected $fillable = [
         'period_code',
@@ -32,5 +34,14 @@ class EmployeeAttendance extends Model
     public function details()
     {
         return $this->hasMany(EmployeeAttendanceDetail::class);
+    }
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->useLogName('Laporan')
+            ->logFillable()
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs();
     }
 }

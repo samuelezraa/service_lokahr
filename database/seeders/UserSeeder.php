@@ -31,5 +31,27 @@ class UserSeeder extends Seeder
                 'role' => 'HR',
             ]
         );
+
+        // Akun Admin Sales
+        User::updateOrCreate(
+            ['email' => 'admin.sales@lokahr.com'],
+            [
+                'name' => 'Admin Sales',
+                'username' => 'AdminSales',
+                'password' => Hash::make('password123'),
+                'role' => 'SALES',
+            ]
+        );
+
+        // Akun Admin Management
+        User::updateOrCreate(
+            ['email' => 'admin.management@lokahr.com'],
+            [
+                'name' => 'Admin Management',
+                'username' => 'AdminManagement',
+                'password' => Hash::make('password123'),
+                'role' => 'MANAGEMENT',
+            ]
+        );
     }
 }

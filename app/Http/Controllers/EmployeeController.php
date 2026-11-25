@@ -5,22 +5,23 @@ namespace App\Http\Controllers;
 use App\Models\Employee;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
 use Carbon\Carbon;
 
 use App\Exports\EmployeeExport;
 use App\Imports\EmployeeImport;
 use App\Exports\EmployeeSampleExport;
-use Maatwebsite\Excel\Facades\Excel; 
+use Maatwebsite\Excel\Facades\Excel;
 
 class EmployeeController extends Controller
 {
     public function index(Request $request)
     {
         $query = Employee::with([
-            'department', 
-            'subDepartment', 
-            'position', 
-            'grade', 
+            'department',
+            'subDepartment',
+            'position',
+            'grade',
             'workScheduleScheme'
         ]);
 
@@ -74,33 +75,45 @@ class EmployeeController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'employee_id'             => 'nullable|string|unique:employees,employee_id',
-            'nip'                     => 'required|string|unique:employees,nip',
+            'employee_id'             => 'required|string|digits:4|unique:employees,employee_id',
+            'nip'                     => 'required|string|digits:9|unique:employees,nip',
             'full_name'               => 'required|string|max:255',
             'email'                   => 'nullable|email|max:255',
-            'phone'                   => 'nullable|string|max:14',
-            'department_id'           => 'nullable|exists:departments,id',
-            'sub_department_id'       => 'nullable|exists:sub_departments,id',
-            'position_id'             => 'nullable|exists:positions,id',
-            'grade_id'                => 'nullable|exists:grades,id',
-            'work_schedule_scheme_id' => 'nullable|exists:work_schedule_schemes,id',
-            'join_date'               => 'nullable|date',
-            'birth_date'              => 'nullable|date',
+            'phone'                   => 'required|string|max:14',
+            'department_id'           => 'required|exists:departments,id',
+            'sub_department_id'       => 'required|exists:sub_departments,id',
+            'position_id'             => 'required|exists:positions,id',
+            'grade_id'                => 'required|exists:grades,id',
+            'work_schedule_scheme_id' => 'required|exists:work_schedule_schemes,id',
+            'join_date'               => 'required|date',
+            'birth_date'              => 'required|date',
             'is_active'               => 'boolean',
+        ], [
+            'employee_id.required' => 'ID Karyawan wajib diisi.',
+            'employee_id.digits'   => 'ID Karyawan harus terdiri dari 4 digit angka.',
+            'employee_id.unique'   => 'ID Karyawan sudah digunakan.',
+            'nip.required'         => 'NIP wajib diisi.',
+            'nip.digits'           => 'NIP harus terdiri dari 9 digit angka.',
+            'nip.unique'           => 'NIP sudah digunakan.',
+            'phone.required'       => 'Nomor telepon wajib diisi.',
         ]);
 
-        // Terapkan fungsi konversi nomor telepon
-        if (isset($validated['phone'])) {
-            $validated['phone'] = Employee::phoneconvert($validated['phone']);
+        // Konversi nomor telepon lalu cek keunikannya di database
+        $convertedPhone = Employee::phoneconvert($validated['phone']);
+        if (Employee::where('phone', $convertedPhone)->exists()) {
+            throw ValidationException::withMessages([
+                'phone' => ['Nomor telepon sudah digunakan oleh karyawan lain.'],
+            ]);
         }
+        $validated['phone'] = $convertedPhone;
 
         // Hitung langsung Umur & Lama Kerja (dibulatkan tanpa koma)
         $now = Carbon::now();
-        $validated['age_years'] = !empty($validated['birth_date']) 
-            ? (int) floor(Carbon::parse($validated['birth_date'])->diffInYears($now)) 
+        $validated['age_years'] = !empty($validated['birth_date'])
+            ? (int) floor(Carbon::parse($validated['birth_date'])->diffInYears($now))
             : null;
-        $validated['work_duration_months'] = !empty($validated['join_date']) 
-            ? (int) floor(Carbon::parse($validated['join_date'])->diffInMonths($now)) 
+        $validated['work_duration_months'] = !empty($validated['join_date'])
+            ? (int) floor(Carbon::parse($validated['join_date'])->diffInMonths($now))
             : null;
 
         // Set default password adalah NIP
@@ -112,10 +125,10 @@ class EmployeeController extends Controller
             'success' => true,
             'message' => 'Employee created successfully',
             'data'    => $employee->load([
-                'department', 
-                'subDepartment', 
-                'position', 
-                'grade', 
+                'department',
+                'subDepartment',
+                'position',
+                'grade',
                 'workScheduleScheme'
             ])
         ], 201);
@@ -124,10 +137,10 @@ class EmployeeController extends Controller
     public function show($id)
     {
         $employee = Employee::with([
-            'department', 
-            'subDepartment', 
-            'position', 
-            'grade', 
+            'department',
+            'subDepartment',
+            'position',
+            'grade',
             'workScheduleScheme'
         ])->findOrFail($id);
 
@@ -142,33 +155,49 @@ class EmployeeController extends Controller
         $employee = Employee::findOrFail($id);
 
         $validated = $request->validate([
-            'employee_id'             => 'nullable|string|unique:employees,employee_id,' . $id,
-            'nip'                     => 'required|string|unique:employees,nip,' . $id,
+            'employee_id'             => 'required|string|digits:4|unique:employees,employee_id,' . $employee->id,
+            'nip'                     => 'required|string|digits:9|unique:employees,nip,' . $employee->id,
             'full_name'               => 'required|string|max:255',
             'email'                   => 'nullable|email|max:255',
-            'phone'                   => 'nullable|string|max:14',
-            'department_id'           => 'nullable|exists:departments,id',
-            'sub_department_id'       => 'nullable|exists:sub_departments,id',
-            'position_id'             => 'nullable|exists:positions,id',
-            'grade_id'                => 'nullable|exists:grades,id',
-            'work_schedule_scheme_id' => 'nullable|exists:work_schedule_schemes,id',
-            'join_date'               => 'nullable|date',
-            'birth_date'              => 'nullable|date',
+            'phone'                   => 'required|string|max:14',
+            'department_id'           => 'required|exists:departments,id',
+            'sub_department_id'       => 'required|exists:sub_departments,id',
+            'position_id'             => 'required|exists:positions,id',
+            'grade_id'                => 'required|exists:grades,id',
+            'work_schedule_scheme_id' => 'required|exists:work_schedule_schemes,id',
+            'join_date'               => 'required|date',
+            'birth_date'              => 'required|date',
             'is_active'               => 'boolean',
+        ], [
+            'employee_id.required' => 'ID Karyawan wajib diisi.',
+            'employee_id.digits'   => 'ID Karyawan harus terdiri dari 4 digit angka.',
+            'employee_id.unique'   => 'ID Karyawan sudah digunakan.',
+            'nip.required'         => 'NIP wajib diisi.',
+            'nip.digits'           => 'NIP harus terdiri dari 9 digit angka.',
+            'nip.unique'           => 'NIP sudah digunakan.',
+            'phone.required'       => 'Nomor telepon wajib diisi.',
         ]);
 
-        // Terapkan fungsi konversi nomor telepon jika diubah
-        if (isset($validated['phone'])) {
-            $validated['phone'] = Employee::phoneconvert($validated['phone']);
+        // Konversi nomor telepon lalu cek keunikannya (kecuali data yang sedang diedit)
+        $convertedPhone = Employee::phoneconvert($validated['phone']);
+        $isPhoneTaken = Employee::where('phone', $convertedPhone)
+            ->where('id', '!=', $employee->id)
+            ->exists();
+
+        if ($isPhoneTaken) {
+            throw ValidationException::withMessages([
+                'phone' => ['Nomor telepon sudah digunakan oleh karyawan lain.'],
+            ]);
         }
+        $validated['phone'] = $convertedPhone;
 
         // Hitung ulang Umur & Lama Kerja (dibulatkan tanpa koma)
         $now = Carbon::now();
-        $validated['age_years'] = !empty($validated['birth_date']) 
-            ? (int) floor(Carbon::parse($validated['birth_date'])->diffInYears($now)) 
+        $validated['age_years'] = !empty($validated['birth_date'])
+            ? (int) floor(Carbon::parse($validated['birth_date'])->diffInYears($now))
             : null;
-        $validated['work_duration_months'] = !empty($validated['join_date']) 
-            ? (int) floor(Carbon::parse($validated['join_date'])->diffInMonths($now)) 
+        $validated['work_duration_months'] = !empty($validated['join_date'])
+            ? (int) floor(Carbon::parse($validated['join_date'])->diffInMonths($now))
             : null;
 
         // Jika NIP berubah, update juga default password jika diperlukan
@@ -182,10 +211,10 @@ class EmployeeController extends Controller
             'success' => true,
             'message' => 'Employee updated successfully',
             'data'    => $employee->load([
-                'department', 
-                'subDepartment', 
-                'position', 
-                'grade', 
+                'department',
+                'subDepartment',
+                'position',
+                'grade',
                 'workScheduleScheme'
             ])
         ]);
@@ -217,8 +246,8 @@ class EmployeeController extends Controller
         ]);
 
         return Excel::download(
-            new EmployeeExport($selectedIds, $filters), 
-            'data-karyawan-' . date('Y-m-d') . '.csv', 
+            new EmployeeExport($selectedIds, $filters),
+            'data-karyawan-' . date('Y-m-d') . '.csv',
             \Maatwebsite\Excel\Excel::CSV
         );
     }
@@ -226,7 +255,16 @@ class EmployeeController extends Controller
     public function import(Request $request)
     {
         $request->validate([
-            'file' => 'required|mimes:xlsx,xls,csv|max:5120', // Maksimal 5MB
+            'file' => [
+                'required',
+                'file',
+                'max:5120',
+                'mimes:xlsx,xls,csv,txt',
+            ],
+        ], [
+            'file.required' => 'File import wajib dipilih.',
+            'file.mimes'    => 'Format file harus berupa xlsx, xls, atau csv.',
+            'file.max'      => 'Ukuran file maksimal 5MB.',
         ]);
 
         try {
@@ -289,8 +327,8 @@ class EmployeeController extends Controller
     public function downloadSample()
     {
         return Excel::download(
-            new EmployeeSampleExport, 
-            'template-import-karyawan.csv', 
+            new EmployeeSampleExport,
+            'template-import-karyawan.csv',
             \Maatwebsite\Excel\Excel::CSV
         );
     }

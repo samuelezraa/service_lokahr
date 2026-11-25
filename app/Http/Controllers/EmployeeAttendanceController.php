@@ -19,11 +19,25 @@ class EmployeeAttendanceController extends Controller
         $query = EmployeeAttendance::query();
 
         if ($period) {
-            // 🟢 Cek apakah period yang dikirim adalah ID numerik atau kode teks (misal: '2026-10')
-            // Jika berupa ID master periode, kita ambil code periodenya terlebih dahulu jika diperlukan,
-            // atau gunakan pengecekan ganda agar mencakup period_code maupun relasi terkait.
-            $query->where(function($q) use ($period) {
-                $q->where('period_code', $period)
+            $periodCodes = collect([$period]);
+
+            $periodModel = \App\Models\Period::where('code', $period)
+                ->orWhere('id', $period)
+                ->first();
+
+            if (!$periodModel && preg_match('/^\d{4}-\d{2}$/', $period)) {
+                $periodModel = \App\Models\Period::where('start_date', 'like', "{$period}%")
+                    ->orWhere('end_date', 'like', "{$period}%")
+                    ->first();
+            }
+
+            if ($periodModel?->code) {
+                $periodCodes->push($periodModel->code);
+            }
+
+            $codes = $periodCodes->filter()->unique()->values();
+            $query->where(function ($q) use ($codes, $period) {
+                $q->whereIn('period_code', $codes)
                   ->orWhere('period_code', 'like', "%{$period}%");
             });
         }
@@ -121,7 +135,7 @@ class EmployeeAttendanceController extends Controller
         ]);
     }
 
-    public function update(Request $request, $id)
+   public function update(Request $request, $id)
     {
         $attendance = EmployeeAttendance::findOrFail($id);
         $validated = $request->validate([
@@ -132,15 +146,28 @@ class EmployeeAttendanceController extends Controller
             EmployeeAttendanceDetail::where('id', $row['id'])
                 ->where('employee_attendance_id', $id)
                 ->update([
-                    'attendance_status'   => $row['attendanceStatus'] ?? 'Berangkat', // 🟢 Sesuaikan
-                    'scheduled_check_in'  => $row['scheduledCheckIn'] ?? '09:00:00', // 🟢 Sesuaikan
-                    'scheduled_check_out' => $row['scheduledCheckOut'] ?? '18:00:00',// 🟢 Sesuaikan
-                    'actual_check_in'     => $row['actualCheckIn'] ?? '00:00:00',    // 🟢 Sesuaikan
-                    'actual_check_out'    => $row['actualCheckOut'] ?? '00:00:00',   // 🟢 Sesuaikan
+                    'attendance_status'   => $row['attendanceStatus'] ?? 'Berangkat',
+                    'scheduled_check_in'  => $row['scheduledCheckIn'] ?? '09:00:00',
+                    'scheduled_check_out' => $row['scheduledCheckOut'] ?? '18:00:00',
+                    'actual_check_in'     => $row['actualCheckIn'] ?? '00:00:00',
+                    'actual_check_out'    => $row['actualCheckOut'] ?? '00:00:00',
                     'status'              => $row['status'] ?? '-',
-                    'notes'               => $row['notes'] ?? '-',                   // 🟢 Sesuaikan
+                    'notes'               => $row['notes'] ?? '-',
                 ]);
         }
+
+        $details = EmployeeAttendanceDetail::where('employee_attendance_id', $attendance->id)->get();
+
+        $attendance->update([
+            'total_work_days'   => $details->whereIn('attendance_status', ['Berangkat', 'Masuk', 'Hadir'])->count(),
+            'total_off_days'    => $details->where('attendance_status', 'Libur')->count(),
+            'total_ph_days'     => $details->whereIn('attendance_status', ['PH', 'Public Holiday'])->count(),
+            'total_permit_days' => $details->where('attendance_status', 'Izin')->count(),
+            'total_alpha_days'  => $details->whereIn('attendance_status', ['Alfa', 'Alpha'])->count(),
+            'total_sick_days'   => $details->where('attendance_status', 'Sakit')->count(),
+            'total_leave_days'  => $details->where('attendance_status', 'Cuti')->count(),
+            'total_late_days'   => $details->where('status', 'Terlambat')->count(),
+        ]);
 
         return response()->json([
             'success' => true,

@@ -4,10 +4,12 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Spatie\Activitylog\LogOptions;
+use Spatie\Activitylog\Traits\LogsActivity;
 
 class Schedule extends Model
 {
-    use HasFactory;
+   use HasFactory, LogsActivity;
 
     protected $fillable = [
         'period_id',
@@ -81,4 +83,19 @@ class Schedule extends Model
     {
         return $this->hasMany(ScheduleScheme::class);
     }
+
+    public function dailyDetails()
+    {
+        return $this->hasMany(ScheduleDailyDetail::class);
+    }
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->useLogName('Jadwal')
+            ->logFillable()
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs();
+    }
+
 }

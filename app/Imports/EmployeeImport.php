@@ -9,7 +9,9 @@ use App\Models\Position;
 use App\Models\Grade;
 use App\Models\WorkScheduleScheme;
 use App\Jobs\CalculateEmployeeMetricsJob;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
 use Maatwebsite\Excel\Concerns\ToArray;
 use Maatwebsite\Excel\Concerns\WithHeadingRow;
@@ -18,7 +20,7 @@ class EmployeeImport implements ToArray, WithHeadingRow
 {
     private function parseDate($value): ?string
     {
-        if (empty($value)) {
+        if ($value === null || trim((string) $value) === '') {
             return null;
         }
 
@@ -27,7 +29,7 @@ class EmployeeImport implements ToArray, WithHeadingRow
                 return Carbon::instance(\PhpOffice\PhpSpreadsheet\Shared\Date::excelToDateTimeObject($value))->format('Y-m-d');
             }
 
-            $cleanDate = str_replace('/', '-', trim((string)$value));
+            $cleanDate = str_replace('/', '-', trim((string) $value));
 
             if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $cleanDate)) {
                 return $cleanDate;
@@ -43,58 +45,261 @@ class EmployeeImport implements ToArray, WithHeadingRow
         }
     }
 
+    private function resolveMasterId(string $modelClass, string $column, mixed $rawValue): ?int
+    {
+        $val = trim((string) ($rawValue ?? ''));
+        if ($val === '') {
+            return null;
+        }
+
+        if (is_numeric($val)) {
+            $id = (int) $val;
+            return $modelClass::where('id', $id)->exists() ? $id : null;
+        }
+
+        $lowerVal = mb_strtolower($val);
+        $table = (new $modelClass)->getTable();
+        $query = $modelClass::query()->whereRaw("LOWER(TRIM({$column})) = ?", [$lowerVal]);
+
+        if ($column !== 'code' && Schema::hasColumn($table, 'code')) {
+            $query->orWhereRaw("LOWER(TRIM(code)) = ?", [$lowerVal]);
+        }
+
+        $foundId = $query->value('id');
+        return $foundId ? (int) $foundId : null;
+    }
+
+    private function validateSubDepartmentBelongsToDepartment(int $subDepartmentId, int $departmentId, int $rowNumber, string $rawSubDept, string $rawDept): void
+    {
+        $subDept = SubDepartment::find($subDepartmentId);
+        if (!$subDept) {
+            throw new \Exception("Baris {$rowNumber} - Kolom Sub Departemen ('{$rawSubDept}'): tidak ditemukan di data master Sub Departemen.");
+        }
+
+        $table = $subDept->getTable();
+        $parentDeptId = null;
+
+        if (Schema::hasColumn($table, 'department_id') && !is_null($subDept->department_id)) {
+            $parentDeptId = (int) $subDept->department_id;
+        } elseif (Schema::hasColumn($table, 'departemen_id') && !is_null($subDept->departemen_id)) {
+            $parentDeptId = (int) $subDept->departemen_id;
+        }
+
+        if (!is_null($parentDeptId) && $parentDeptId !== $departmentId) {
+            throw new \Exception("Baris {$rowNumber} - Kolom Sub Departemen ('{$rawSubDept}'): tidak sesuai dengan Departemen ('{$rawDept}').");
+        }
+    }
+
+    private function validatePositionBelongsToHierarchy(int $positionId, int $subDepartmentId, int $departmentId, int $rowNumber, string $rawPos, string $rawSubDept, string $rawDept): void
+    {
+        $pos = Position::find($positionId);
+        if (!$pos) {
+            throw new \Exception("Baris {$rowNumber} - Kolom POS ('{$rawPos}'): tidak ditemukan di data master POS.");
+        }
+
+        $table = $pos->getTable();
+        $parentSubDeptId = null;
+        $parentDeptId = null;
+
+        if (Schema::hasColumn($table, 'sub_department_id') && !is_null($pos->sub_department_id)) {
+            $parentSubDeptId = (int) $pos->sub_department_id;
+        } elseif (Schema::hasColumn($table, 'sub_departemen_id') && !is_null($pos->sub_departemen_id)) {
+            $parentSubDeptId = (int) $pos->sub_departemen_id;
+        }
+
+        if (Schema::hasColumn($table, 'department_id') && !is_null($pos->department_id)) {
+            $parentDeptId = (int) $pos->department_id;
+        } elseif (Schema::hasColumn($table, 'departemen_id') && !is_null($pos->departemen_id)) {
+            $parentDeptId = (int) $pos->departemen_id;
+        }
+
+        if (!is_null($parentSubDeptId) && $parentSubDeptId !== $subDepartmentId) {
+            throw new \Exception("Baris {$rowNumber} - Kolom POS ('{$rawPos}'): tidak sesuai dengan Sub Departemen ('{$rawSubDept}').");
+        }
+
+        if (!is_null($parentDeptId) && $parentDeptId !== $departmentId) {
+            throw new \Exception("Baris {$rowNumber} - Kolom POS ('{$rawPos}'): tidak sesuai dengan Departemen ('{$rawDept}').");
+        }
+    }
+
     public function array(array $array): void
     {
-        foreach ($array as $row) {
-            $nip  = $row['nip'] ?? null;
-            $nama = $row['nama'] ?? $row['nama_lengkap'] ?? $row['full_name'] ?? null;
+        DB::transaction(function () use ($array) {
+            $seenEmployeeIds = [];
+            $seenNips = [];
+            $seenPhones = [];
+            $hasImportedRow = false;
 
-            if (empty($nip) || empty($nama)) {
-                continue;
-            }
+            foreach ($array as $index => $row) {
+                $rowNumber = $index + 2; // +2 karena baris 1 adalah header/heading
 
-            $stringNip = (string) $nip;
+                $rawEmpId     = trim((string) ($row['id_karyawan'] ?? $row['employee_id'] ?? ''));
+                $rawNip       = trim((string) ($row['nip'] ?? ''));
+                $nama         = trim((string) ($row['nama'] ?? $row['nama_lengkap'] ?? $row['full_name'] ?? ''));
+                $email        = trim((string) ($row['email'] ?? ''));
+                $rawPhone     = trim((string) ($row['no_telepon'] ?? $row['telepon'] ?? $row['phone'] ?? ''));
+                $rawDept      = trim((string) ($row['departemen'] ?? $row['department'] ?? ''));
+                $rawSubDept   = trim((string) ($row['sub_departemen'] ?? $row['sub_department'] ?? ''));
+                $rawPos       = trim((string) ($row['pos'] ?? $row['position'] ?? ''));
+                $rawGrade     = trim((string) ($row['grade'] ?? ''));
+                $rawScheme    = trim((string) ($row['skema_hari_kerja'] ?? $row['work_schedule_scheme'] ?? ''));
+                $rawJoinDate  = $row['tanggal_bergabung'] ?? $row['join_date'] ?? null;
+                $rawBirthDate = $row['tanggal_lahir'] ?? $row['birth_date'] ?? null;
 
-            // Master data resolvers (Mendukung header Bahasa Indonesia tanpa underscore)
-            $deptVal = $row['departemen'] ?? $row['department'] ?? null;
-            $departmentId = is_numeric($deptVal) ? (int)$deptVal : (!empty($deptVal) ? Department::where('name', trim($deptVal))->value('id') : null);
+                // Lewati baris yang seluruhnya kosong
+                $isAllEmpty =
+                    $rawEmpId === '' &&
+                    $rawNip === '' &&
+                    $nama === '' &&
+                    $email === '' &&
+                    $rawPhone === '' &&
+                    $rawDept === '' &&
+                    $rawSubDept === '' &&
+                    $rawPos === '' &&
+                    $rawGrade === '' &&
+                    $rawScheme === '' &&
+                    ($rawJoinDate === null || trim((string) $rawJoinDate) === '') &&
+                    ($rawBirthDate === null || trim((string) $rawBirthDate) === '');
 
-            $subDeptVal = $row['sub_departemen'] ?? $row['sub_department'] ?? null;
-            $subDepartmentId = is_numeric($subDeptVal) ? (int)$subDeptVal : (!empty($subDeptVal) ? SubDepartment::where('name', trim($subDeptVal))->value('id') : null);
+                if ($isAllEmpty) {
+                    continue;
+                }
 
-            $posVal = $row['pos'] ?? $row['position'] ?? null;
-            $positionId = is_numeric($posVal) ? (int)$posVal : (!empty($posVal) ? Position::where('title', trim($posVal))->value('id') : null);
+                // 1. Kolom ID Karyawan (wajib, 4 digit angka, unik)
+                if ($rawEmpId === '') {
+                    throw new \Exception("Baris {$rowNumber} - Kolom ID Karyawan: wajib diisi.");
+                }
+                if (!preg_match('/^\d{4}$/', $rawEmpId)) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom ID Karyawan ('{$rawEmpId}'): harus berupa 4 digit angka.");
+                }
+                if (in_array($rawEmpId, $seenEmployeeIds, true)) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom ID Karyawan ('{$rawEmpId}'): duplikat dengan baris lain di file import.");
+                }
+                if (Employee::where('employee_id', $rawEmpId)->exists()) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom ID Karyawan ('{$rawEmpId}'): sudah terdaftar di database.");
+                }
 
-            $gradeVal = $row['grade'] ?? null;
-            $gradeId = is_numeric($gradeVal) ? (int)$gradeVal : (!empty($gradeVal) ? Grade::where('name', trim($gradeVal))->value('id') : null);
+                // 2. Kolom NIP (wajib, 9 digit angka, unik)
+                if ($rawNip === '') {
+                    throw new \Exception("Baris {$rowNumber} - Kolom NIP: wajib diisi.");
+                }
+                if (!preg_match('/^\d{9}$/', $rawNip)) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom NIP ('{$rawNip}'): harus berupa 9 digit angka.");
+                }
+                if (in_array($rawNip, $seenNips, true)) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom NIP ('{$rawNip}'): duplikat dengan baris lain di file import.");
+                }
+                if (Employee::where('nip', $rawNip)->exists()) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom NIP ('{$rawNip}'): sudah terdaftar di database.");
+                }
 
-            $schemeVal = $row['skema_hari_kerja'] ?? $row['work_schedule_scheme'] ?? null;
-            $schemeId = is_numeric($schemeVal) ? (int)$schemeVal : (!empty($schemeVal) ? WorkScheduleScheme::where('name', trim($schemeVal))->value('id') : null);
+                // 3. Kolom Nama Lengkap (wajib)
+                if ($nama === '') {
+                    throw new \Exception("Baris {$rowNumber} - Kolom Nama Lengkap: wajib diisi.");
+                }
 
-            // Parsing Tanggal
-            $rawJoinDate  = $row['tanggal_bergabung'] ?? $row['join_date'] ?? null;
-            $rawBirthDate = $row['tanggal_lahir'] ?? $row['birth_date'] ?? null;
+                // 4. Kolom Email (opsional, tapi jika diisi harus format email valid)
+                if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom Email ('{$email}'): format email tidak valid.");
+                }
 
-            $joinDate  = $this->parseDate($rawJoinDate);
-            $birthDate = $this->parseDate($rawBirthDate);
+                // 5. Kolom No. Telepon (wajib, terkonversi, unik)
+                if ($rawPhone === '') {
+                    throw new \Exception("Baris {$rowNumber} - Kolom No. Telepon: wajib diisi.");
+                }
+                $phone = Employee::phoneconvert($rawPhone);
+                if (empty($phone)) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom No. Telepon ('{$rawPhone}'): format nomor telepon tidak valid.");
+                }
+                if (in_array($phone, $seenPhones, true)) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom No. Telepon ('{$rawPhone}'): duplikat dengan baris lain di file import.");
+                }
+                if (Employee::where('phone', $phone)->exists()) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom No. Telepon ('{$rawPhone}'): sudah terdaftar di database.");
+                }
 
-            // Hitung langsung dengan pembulatan ke bawah tanpa desimal
-            $ageYears           = $birthDate ? (int) floor(Carbon::parse($birthDate)->diffInYears(Carbon::now())) : null;
-            $workDurationMonths = $joinDate ? (int) floor(Carbon::parse($joinDate)->diffInMonths(Carbon::now())) : null;
+                // 6. Kolom Departemen (wajib & harus ada di master)
+                if ($rawDept === '') {
+                    throw new \Exception("Baris {$rowNumber} - Kolom Departemen: wajib diisi.");
+                }
+                $departmentId = $this->resolveMasterId(Department::class, 'name', $rawDept);
+                if (!$departmentId) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom Departemen ('{$rawDept}'): tidak ditemukan di data master Departemen.");
+                }
 
-            $rawPhone = $row['no_telepon'] ?? $row['telepon'] ?? $row['phone'] ?? null;
-            $phone = !empty($rawPhone) ? Employee::phoneconvert((string) $rawPhone) : null;
+                // 7. Kolom Sub Departemen (wajib, ada di master, & sesuai Departemen)
+                if ($rawSubDept === '') {
+                    throw new \Exception("Baris {$rowNumber} - Kolom Sub Departemen: wajib diisi.");
+                }
+                $subDepartmentId = $this->resolveMasterId(SubDepartment::class, 'name', $rawSubDept);
+                if (!$subDepartmentId) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom Sub Departemen ('{$rawSubDept}'): tidak ditemukan di data master Sub Departemen.");
+                }
+                $this->validateSubDepartmentBelongsToDepartment($subDepartmentId, $departmentId, $rowNumber, $rawSubDept, $rawDept);
 
-            $empId = $row['id_karyawan'] ?? $row['employee_id'] ?? null;
+                // 8. Kolom POS (wajib, ada di master, & sesuai Sub Departemen / Departemen)
+                if ($rawPos === '') {
+                    throw new \Exception("Baris {$rowNumber} - Kolom POS: wajib diisi.");
+                }
+                $positionId = $this->resolveMasterId(Position::class, 'title', $rawPos);
+                if (!$positionId) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom POS ('{$rawPos}'): tidak ditemukan di data master POS.");
+                }
+                $this->validatePositionBelongsToHierarchy($positionId, $subDepartmentId, $departmentId, $rowNumber, $rawPos, $rawSubDept, $rawDept);
 
-            Employee::updateOrCreate(
-                ['nip' => $stringNip],
-                [
-                    'employee_id'             => !empty($empId) ? (string) $empId : null,
-                    'nip'                     => $stringNip,
-                    'employee_password'       => Hash::make($stringNip),
-                    'full_name'               => trim((string) $nama),
-                    'email'                   => $row['email'] ?? null,
+                // 9. Kolom Grade (wajib & harus ada di master)
+                if ($rawGrade === '') {
+                    throw new \Exception("Baris {$rowNumber} - Kolom Grade: wajib diisi.");
+                }
+                $gradeId = $this->resolveMasterId(Grade::class, 'name', $rawGrade);
+                if (!$gradeId) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom Grade ('{$rawGrade}'): tidak ditemukan di data master Grade.");
+                }
+
+                // 10. Kolom Skema Hari Kerja (wajib & harus ada di master)
+                if ($rawScheme === '') {
+                    throw new \Exception("Baris {$rowNumber} - Kolom Skema Hari Kerja: wajib diisi.");
+                }
+                $schemeId = $this->resolveMasterId(WorkScheduleScheme::class, 'name', $rawScheme);
+                if (!$schemeId) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom Skema Hari Kerja ('{$rawScheme}'): tidak ditemukan di data master Skema Hari Kerja.");
+                }
+
+                // 11. Kolom Tanggal Bergabung (wajib & tanggal valid)
+                if ($rawJoinDate === null || trim((string) $rawJoinDate) === '') {
+                    throw new \Exception("Baris {$rowNumber} - Kolom Tanggal Bergabung: wajib diisi.");
+                }
+                $joinDate = $this->parseDate($rawJoinDate);
+                if (!$joinDate) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom Tanggal Bergabung ('" . trim((string) $rawJoinDate) . "'): format tanggal tidak valid.");
+                }
+
+                // 12. Kolom Tanggal Lahir (wajib & tanggal valid)
+                if ($rawBirthDate === null || trim((string) $rawBirthDate) === '') {
+                    throw new \Exception("Baris {$rowNumber} - Kolom Tanggal Lahir: wajib diisi.");
+                }
+                $birthDate = $this->parseDate($rawBirthDate);
+                if (!$birthDate) {
+                    throw new \Exception("Baris {$rowNumber} - Kolom Tanggal Lahir ('" . trim((string) $rawBirthDate) . "'): format tanggal tidak valid.");
+                }
+
+                // Catat nilai unik yang sudah lolos validasi pada file ini
+                $seenEmployeeIds[] = $rawEmpId;
+                $seenNips[]        = $rawNip;
+                $seenPhones[]      = $phone;
+                $hasImportedRow    = true;
+
+                // Hitung langsung Umur & Lama Kerja (dibulatkan ke bawah tanpa koma)
+                $now                = Carbon::now();
+                $ageYears           = (int) floor(Carbon::parse($birthDate)->diffInYears($now));
+                $workDurationMonths = (int) floor(Carbon::parse($joinDate)->diffInMonths($now));
+
+                Employee::create([
+                    'employee_id'             => $rawEmpId,
+                    'nip'                     => $rawNip,
+                    'employee_password'       => Hash::make($rawNip),
+                    'full_name'               => $nama,
+                    'email'                   => $email !== '' ? $email : null,
                     'phone'                   => $phone,
                     'department_id'           => $departmentId,
                     'sub_department_id'       => $subDepartmentId,
@@ -105,10 +310,16 @@ class EmployeeImport implements ToArray, WithHeadingRow
                     'birth_date'              => $birthDate,
                     'age_years'               => $ageYears,
                     'work_duration_months'    => $workDurationMonths,
-                    'is_active'               => isset($row['status']) ? (strtolower(trim((string) $row['status'])) === 'aktif' || $row['status'] == 1) : true,
-                ]
-            );
-        }
+                    'is_active'               => isset($row['status']) && trim((string) $row['status']) !== ''
+                        ? (in_array(mb_strtolower(trim((string) $row['status'])), ['aktif', 'active', '1', 'true'], true))
+                        : true,
+                ]);
+            }
+
+            if (!$hasImportedRow) {
+                throw new \Exception("File import tidak memiliki data karyawan yang valid untuk diproses.");
+            }
+        });
 
         CalculateEmployeeMetricsJob::dispatch();
     }

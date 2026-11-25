@@ -4,10 +4,12 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Spatie\Activitylog\LogOptions;
+use Spatie\Activitylog\Traits\LogsActivity;
 
 class AttendanceLog extends Model
 {
-    use HasFactory;
+    use HasFactory, LogsActivity;
 
     protected $fillable = [
         'date',
@@ -24,4 +26,13 @@ class AttendanceLog extends Model
     {
         return $this->hasMany(AttendanceLogDetail::class);
     }
+
+    public function getActivitylogOptions(): LogOptions
+{
+    return LogOptions::defaults()
+        ->useLogName('Laporan')
+        ->logFillable()
+        ->logOnlyDirty()
+        ->dontSubmitEmptyLogs();
+}
 }

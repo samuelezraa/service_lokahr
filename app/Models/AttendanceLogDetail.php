@@ -4,10 +4,12 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Spatie\Activitylog\LogOptions;
+use Spatie\Activitylog\Traits\LogsActivity;
 
 class AttendanceLogDetail extends Model
 {
-    use HasFactory;
+    use HasFactory, LogsActivity;
 
     protected $fillable = [
         'attendance_log_id',
@@ -38,6 +40,16 @@ class AttendanceLogDetail extends Model
     // 🟢 UBAH RELASI: Gunakan 'nip' sebagai Foreign Key (bukan 'nik')
     public function employee()
     {
-        return $this->belongsTo(Employee::class, 'nip', 'nip')->with(['subDepartment', 'grade', 'position']);
+        return $this->belongsTo(Employee::class, 'nip', 'employee_id')
+            ->with(['subDepartment', 'grade', 'position']);
+    }
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->useLogName('Master Data')
+            ->logFillable()
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs();
     }
 }

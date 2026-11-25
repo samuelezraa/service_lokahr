@@ -65,7 +65,7 @@ class ScheduleSeeder extends Seeder
                     ],
                     [
                         'name'                => 'Jadwal Reguler ' . $period->name,
-                        'nip'                 => $employee->nip ?? $employee->employee_id ?? '-',
+                        'nip' => $employee->nip ?? '-',
                         'employee_name'       => $employee->full_name ?? $employee->name,
                         'department_id'       => $employee->department_id,
                         'department_name'     => $employee->department?->name ?? '-',

@@ -30,43 +30,49 @@ class PositionController extends Controller
             });
         }
 
-        // 3. Filter Departemen secara Fleksibel (ID, Code, atau Nama)
-        if ($request->has('department_id') && !empty($request->department_id)) {
-            $deptInput = $request->department_id;
-            $dept = Department::find($deptInput); // Cari objek berdasarkan ID jika berupa angka
+        // 3. Filter Departemen (mendukung department_code atau department_id)
+$deptInput = $request->input('department_code', $request->input('department_id'));
+if (!empty($deptInput)) {
+    $dept = Department::where('code', $deptInput)
+        ->orWhere('name', $deptInput)
+        ->when(is_numeric($deptInput), fn($q) => $q->orWhere('id', (int) $deptInput))
+        ->first();
 
-            $deptCode = $dept ? $dept->code : null;
-            $deptName = $dept ? $dept->name : null;
+    $deptCode = $dept ? $dept->code : null;
+    $deptName = $dept ? $dept->name : null;
 
-            $query->where(function($q) use ($deptInput, $deptCode, $deptName) {
-                $q->where('department_code', $deptInput);
-                if ($deptCode) {
-                    $q->orWhere('department_code', $deptCode);
-                }
-                if ($deptName) {
-                    $q->orWhere('department_code', $deptName);
-                }
-            });
+    $query->where(function ($q) use ($deptInput, $deptCode, $deptName) {
+        $q->where('department_code', $deptInput);
+        if ($deptCode) {
+            $q->orWhere('department_code', $deptCode);
         }
-
-        // 4. Filter Sub Departemen secara Fleksibel (ID, Code, atau Nama)
-        if ($request->has('sub_department_id') && !empty($request->sub_department_id)) {
-            $subInput = $request->sub_department_id;
-            $subDept = SubDepartment::find($subInput); // Cari objek berdasarkan ID jika berupa angka
-
-            $subCode = $subDept ? $subDept->code : null;
-            $subName = $subDept ? $subDept->name : null;
-
-            $query->where(function($q) use ($subInput, $subCode, $subName) {
-                $q->where('sub_department_code', $subInput);
-                if ($subCode) {
-                    $q->orWhere('sub_department_code', $subCode);
-                }
-                if ($subName) {
-                    $q->orWhere('sub_department_code', $subName);
-                }
-            });
+        if ($deptName) {
+            $q->orWhere('department_code', $deptName);
         }
+    });
+}
+
+// 4. Filter Sub Departemen (mendukung sub_department_code atau sub_department_id)
+$subInput = $request->input('sub_department_code', $request->input('sub_department_id'));
+if (!empty($subInput)) {
+    $subDept = SubDepartment::where('code', $subInput)
+        ->orWhere('name', $subInput)
+        ->when(is_numeric($subInput), fn($q) => $q->orWhere('id', (int) $subInput))
+        ->first();
+
+    $subCode = $subDept ? $subDept->code : null;
+    $subName = $subDept ? $subDept->name : null;
+
+    $query->where(function ($q) use ($subInput, $subCode, $subName) {
+        $q->where('sub_department_code', $subInput);
+        if ($subCode) {
+            $q->orWhere('sub_department_code', $subCode);
+        }
+        if ($subName) {
+            $q->orWhere('sub_department_code', $subName);
+        }
+    });
+}
 
         if ($request->boolean('all')) {
             $positions = $query->get();
@@ -93,24 +99,32 @@ class PositionController extends Controller
         ]);
     }
 
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'code'                => 'required|string|unique:positions,code',
-            'title'               => 'required|string|max:255',
-            'department_code'     => 'nullable|string',
-            'sub_department_code' => 'nullable|string',
-            'is_active'           => 'boolean',
-        ]);
+  public function store(Request $request)
+{
+    $request->merge([
+        'code' => is_string($request->input('code'))
+            ? strtoupper(trim($request->input('code')))
+            : $request->input('code'),
+    ]);
 
-        $position = Position::create($validated);
+    $validated = $request->validate([
+        'code'                => ['required', 'string', 'regex:/^POS\d{1,4}$/', 'unique:positions,code'],
+        'title'               => 'required|string|max:255',
+        'department_code'     => 'nullable|string',
+        'sub_department_code' => 'nullable|string',
+        'is_active'           => 'boolean',
+    ], [
+        'code.regex' => 'Format ID POS harus diawali POS dan diikuti 1 sampai 4 digit angka (contoh: POS01).',
+    ]);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Position created successfully',
-            'data'    => $position
-        ], 201);
-    }
+    $position = Position::create($validated);
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Position created successfully',
+        'data'    => $position
+    ], 201);
+}
 
     public function update(Request $request, $id)
     {

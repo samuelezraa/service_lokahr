@@ -2,172 +2,176 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\AttendanceLogDetail;
-use App\Models\Employee;
-use Illuminate\Http\Request;
 use App\Exports\AttendanceLogDetailExport;
+use App\Models\Employee;
+use App\Models\EmployeeAttendanceDetail;
+use Illuminate\Http\Request;
+use Maatwebsite\Excel\Excel as ExcelWriter;
 use Maatwebsite\Excel\Facades\Excel;
+
 class AttendanceLogDetailController extends Controller
 {
-    /**
-     * GET /api/attendance-log-details
-     * Mendapatkan daftar laporan absensi dengan Server-Side Pagination, Search, & Filter
-     */
     public function index(Request $request)
     {
-        $query = AttendanceLogDetail::with([
-            'attendanceLog',
-            'department',
-        ])->latest('attendance_time');
+        $perPage = (int) $request->input('per_page', 25);
 
-        // Search Global (NIP, Nama Karyawan)
-        if ($request->has('search') && !empty($request->search)) {
+        // Gunakan EmployeeAttendanceDetail sebagai sumber utama agar sinkron dengan Absensi Karyawan
+        $detailQuery = EmployeeAttendanceDetail::with([
+            'employeeAttendance',
+        ])->where(function ($q) {
+            $q->whereNotNull('actual_check_in')
+              ->where('actual_check_in', '!=', '00:00:00')
+              ->orWhere(function ($q2) {
+                  $q2->whereNotNull('actual_check_out')
+                     ->where('actual_check_out', '!=', '00:00:00');
+              });
+        });
+
+        if ($request->filled('search')) {
             $search = $request->search;
-            $query->where(function ($q) use ($search) {
+            $detailQuery->whereHas('employeeAttendance', function ($q) use ($search) {
                 $q->where('nip', 'like', "%{$search}%")
                   ->orWhere('employee_name', 'like', "%{$search}%");
             });
         }
 
-        // Filter Rentang Tanggal
-        if ($request->has('start_date') && !empty($request->start_date)) {
-            $query->whereDate('date', '>=', $request->start_date);
+        if ($request->filled('start_date')) {
+            $detailQuery->whereDate('date', '>=', $request->start_date);
         }
-        if ($request->has('end_date') && !empty($request->end_date)) {
-            $query->whereDate('date', '<=', $request->end_date);
-        }
-
-        // Filter Departemen (bisa berdasarkan ID atau nama)
-        if ($request->has('department_id') && !empty($request->department_id)) {
-            $query->where('department_id', $request->department_id);
-        } elseif ($request->has('dept') && !empty($request->dept)) {
-            $query->where('department_name', $request->dept);
+        if ($request->filled('end_date')) {
+            $detailQuery->whereDate('date', '<=', $request->end_date);
         }
 
-        // Filter Sub Departemen via Relasi Employee
-        if ($request->has('sub_dept') && !empty($request->sub_dept)) {
+        if ($request->filled('dept')) {
+            $dept = $request->dept;
+            $detailQuery->whereHas('employeeAttendance', function ($q) use ($dept) {
+                $q->where('department_name', $dept);
+            });
+        }
+
+        if ($request->filled('sub_dept')) {
             $subDept = $request->sub_dept;
-            $query->whereHas('employee.subDepartment', function ($q) use ($subDept) {
-                $q->where('name', $subDept);
+            $detailQuery->whereHas('employeeAttendance', function ($q) use ($subDept) {
+                $q->where('sub_department_name', $subDept);
             });
         }
 
-        // Filter Grade via Relasi Employee
-        if ($request->has('grade') && !empty($request->grade)) {
+        if ($request->filled('grade')) {
             $grade = $request->grade;
-            $query->whereHas('employee.grade', function ($q) use ($grade) {
-                $q->where('name', $grade);
+            $detailQuery->whereHas('employeeAttendance', function ($q) use ($grade) {
+                $q->where('grade_name', $grade);
             });
         }
 
-        $perPage = (int) $request->input('per_page', 25);
-        $paginated = $query->paginate($perPage);
+        $allDetails = $detailQuery->orderByDesc('date')->orderBy('id')->get();
 
-        // Ambil semua NIP dari data absensi pada halaman aktif untuk pencocokan data Karyawan
-        $nips = collect($paginated->items())->pluck('nip')->filter()->unique();
-        $employees = Employee::with(['subDepartment', 'position', 'grade'])
-            ->whereIn('nip', $nips)
-            ->get()
-            ->keyBy('nip');
+        $nips = $allDetails
+            ->map(fn ($d) => trim((string) ($d->employeeAttendance?->nip ?? '')))
+            ->filter()
+            ->unique()
+            ->values();
 
-        // Map data agar menyertakan relasi karyawan secara lengkap & presisi
-        $mappedItems = collect($paginated->items())->map(function ($item) use ($employees) {
-            $emp = $employees->get($item->nip);
+        // Hanya ambil karyawan yang aktif (is_active = true)
+        $activeEmployees = Employee::with(['department', 'subDepartment', 'position', 'grade'])
+            ->where('is_active', true)
+            ->where(function ($q) use ($nips) {
+                $q->whereIn('nip', $nips)
+                  ->orWhereIn('employee_id', $nips);
+            })
+            ->get();
 
-            return [
-                'id'                     => (string) $item->id,
-                'nip'                    => $item->nip ?? $emp?->nip ?? '-',
-                'name'                   => $item->employee_name ?? $emp?->full_name ?? '-',
-                'dept'                   => $item->department_name ?? $item->department?->name ?? $emp?->department?->name ?? '-',
-                'subDept'                => $emp?->subDepartment?->name ?? '-',
-                'pos'                    => $emp?->position?->name ?? $emp?->position?->title ?? '-',
-                'grade'                  => $emp?->grade?->name ?? '-',
-                'attendanceEnrollId'     => $item->nip ?? '-',
+        $employeesByNip   = $activeEmployees->keyBy(fn ($e) => trim((string) $e->nip));
+        $employeesByEmpId = $activeEmployees->keyBy(fn ($e) => trim((string) $e->employee_id));
+
+        // Kumpulkan semua kode milik karyawan aktif agar karyawan nonaktif otomatis tersaring
+       $activeCodes = $activeEmployees
+        ->flatMap(fn ($e) => [trim((string) $e->nip), trim((string) $e->employee_id)])
+        ->filter()
+        ->unique()
+        ->values();
+
+        $rows = collect();
+        foreach ($allDetails as $item) {
+            $att  = $item->employeeAttendance;
+            $code = trim((string) ($att?->nip ?? ''));
+
+           if ($code === '' || !$activeCodes->contains($code)) {
+                continue;
+            }
+
+            $emp = $employeesByNip->get($code) ?? $employeesByEmpId->get($code);
+
+            $baseRow = [
+                'employee_id'            => $emp?->employee_id ?? $code,
+                'nip'                    => $emp?->nip ?? $code,
+                'name'                   => $emp?->full_name ?? ($att?->employee_name ?: '-'),
+                'dept'                   => $att?->department_name ?? $emp?->department?->name ?? '-',
+                'subDept'                => $att?->sub_department_name ?? $emp?->subDepartment?->name ?? '-',
+                'pos'                    => $att?->pos_name ?? $emp?->position?->name ?? $emp?->position?->title ?? '-',
+                'grade'                  => $att?->grade_name ?? $emp?->grade?->name ?? '-',
+                'attendanceEnrollId'     => $emp?->employee_id ?? $code,
                 'attendanceVerification' => '99',
                 'presenceVerification'   => '255',
-                'attendanceTime'         => $item->attendance_time ? date('H:i:s', strtotime($item->attendance_time)) : '-',
-                'attendanceDate'         => $item->date ? date('Y-m-d', strtotime($item->date)) : '-',
-                'dataUploadTime'         => $item->created_at ? $item->created_at->format('Y-m-d H:i:s') : '-',
-                'machineId'              => (string) ($item->attendance_log_id ?? '-'),
-                'machineIp'              => $item->attendanceLog?->machine_ip ?? '-',
+                'attendanceDate'         => $item->date ? $item->date->format('Y-m-d') : '-',
+                'dataUploadTime'         => $item->updated_at ? $item->updated_at->format('Y-m-d H:i:s') : '-',
+                'machineId'              => '1',
+                'machineIp'              => '192.168.1.201',
             ];
-        });
+
+            if (!empty($item->actual_check_in) && $item->actual_check_in !== '00:00:00') {
+                $rows->push(array_merge($baseRow, [
+                    'id'             => $item->id . '-in',
+                    'attendanceTime' => $item->actual_check_in,
+                ]));
+            }
+
+            if (!empty($item->actual_check_out) && $item->actual_check_out !== '00:00:00') {
+                $rows->push(array_merge($baseRow, [
+                    'id'             => $item->id . '-out',
+                    'attendanceTime' => $item->actual_check_out,
+                ]));
+            }
+        }
+
+        $uniqueRows = $rows
+            ->unique(fn ($r) => $r['employee_id'] . '|' . $r['attendanceDate'] . '|' . $r['attendanceTime'])
+            ->values();
+
+        $total       = $uniqueRows->count();
+        $lastPage    = max(1, (int) ceil($total / max(1, $perPage)));
+        $currentPage = min(max(1, (int) $request->input('page', 1)), $lastPage);
+        $offset      = ($currentPage - 1) * $perPage;
+        $pagedItems  = $uniqueRows->slice($offset, $perPage)->values();
 
         return response()->json([
             'success' => true,
-            'data'    => $mappedItems,
+            'data'    => $pagedItems,
             'meta'    => [
-                'current_page' => $paginated->currentPage(),
-                'from'         => $paginated->firstItem(),
-                'last_page'    => $paginated->lastPage(),
-                'per_page'     => $paginated->perPage(),
-                'to'           => $paginated->lastItem(),
-                'total'        => $paginated->total(),
-            ]
-        ]);
-    }
-
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'attendance_log_id' => 'nullable|exists:attendance_logs,id',
-            'date'              => 'required|date',
-            'nip'               => 'required|string',
-            'department_id'     => 'nullable|exists:departments,id',
-            'department_name'   => 'required|string',
-            'employee_name'     => 'required|string',
-            'attendance_time'   => 'required|date',
-            'attendance_type'   => 'required|string',
-        ]);
-
-        $detail = AttendanceLogDetail::create($validated);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Attendance log detail created successfully',
-            'data'    => $detail
-        ], 201);
-    }
-
-    public function show($id)
-    {
-        $detail = AttendanceLogDetail::with([
-            'attendanceLog',
-            'department',
-        ])->findOrFail($id);
-
-        return response()->json([
-            'success' => true,
-            'data'    => $detail
-        ]);
-    }
-
-    public function destroy($id)
-    {
-        $detail = AttendanceLogDetail::findOrFail($id);
-        $detail->delete();
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Attendance log detail deleted successfully'
+                'current_page' => $currentPage,
+                'from'         => $total > 0 ? $offset + 1 : null,
+                'last_page'    => $lastPage,
+                'per_page'     => $perPage,
+                'to'           => $total > 0 ? min($offset + $perPage, $total) : null,
+                'total'        => $total,
+            ],
         ]);
     }
 
     public function export(Request $request)
-{
-    $startDate = $request->query('start_date');
-    $endDate   = $request->query('end_date');
-    $dept      = $request->query('dept');
-    $subDept   = $request->query('sub_dept');
-    $grade     = $request->query('grade');
-    $search    = $request->query('search');
+    {
+        $startDate = $request->query('start_date');
+        $endDate   = $request->query('end_date');
+        $dept      = $request->query('dept');
+        $subDept   = $request->query('sub_dept');
+        $grade     = $request->query('grade');
+        $search    = $request->query('search');
 
-    $fileName = 'laporan-absensi-' . date('Y-m-d') . '.xlsx';
+        $fileName = 'laporan-absensi-' . date('Y-m-d') . '.csv';
 
-    return Excel::download(
-        new AttendanceLogDetailExport($startDate, $endDate, $dept, $subDept, $grade, $search),
-        $fileName
-    );
-}
-
+        return Excel::download(
+            new AttendanceLogDetailExport($startDate, $endDate, $dept, $subDept, $grade, $search),
+            $fileName,
+            ExcelWriter::CSV
+        );
+    }
 }

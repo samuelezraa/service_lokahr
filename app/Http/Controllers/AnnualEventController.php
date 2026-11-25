@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\AnnualEvent;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class AnnualEventController extends Controller
 {
@@ -79,6 +80,12 @@ class AnnualEventController extends Controller
             'is_active'           => 'boolean',
         ]);
 
+        $startDate = $validated['start_date'];
+        $endDate = $validated['end_date'] ?? $startDate;
+
+        $this->ensureNoDateOverlap($startDate, $endDate);
+
+        $validated['end_date'] = $endDate;
         $event = AnnualEvent::create($validated);
 
         return response()->json([
@@ -87,6 +94,8 @@ class AnnualEventController extends Controller
             'data'    => $event
         ], 201);
     }
+
+
 
     public function show($id)
     {
@@ -97,7 +106,7 @@ class AnnualEventController extends Controller
         ]);
     }
 
-    public function update(Request $request, $id)
+   public function update(Request $request, $id)
     {
         $event = AnnualEvent::findOrFail($id);
 
@@ -110,6 +119,13 @@ class AnnualEventController extends Controller
             'is_active'           => 'boolean',
         ]);
 
+        $startDate = $validated['start_date'];
+        $endDate = $validated['end_date'] ?? $startDate;
+
+        // Kecualikan ID event yang sedang diedit agar tidak bentrok dengan dirinya sendiri
+        $this->ensureNoDateOverlap($startDate, $endDate, $event->id);
+
+        $validated['end_date'] = $endDate;
         $event->update($validated);
 
         return response()->json([
@@ -117,6 +133,32 @@ class AnnualEventController extends Controller
             'message' => 'Annual event updated successfully',
             'data'    => $event
         ]);
+    }
+
+    private function ensureNoDateOverlap(string $startDate, string $endDate, int|string|null $ignoreId = null): void
+    {
+        $conflict = AnnualEvent::query()
+            ->when($ignoreId !== null, function ($q) use ($ignoreId) {
+                $q->where('id', '!=', $ignoreId);
+            })
+            ->where(function ($q) use ($startDate, $endDate) {
+                $q->whereDate('start_date', '<=', $endDate)
+                  ->where(function ($sub) use ($startDate) {
+                      $sub->whereNotNull('end_date')
+                          ->whereDate('end_date', '>=', $startDate)
+                          ->orWhere(function ($nullEnd) use ($startDate) {
+                              $nullEnd->whereNull('end_date')
+                                      ->whereDate('start_date', '>=', $startDate);
+                          });
+                  });
+            })
+            ->first();
+
+        if ($conflict) {
+            throw ValidationException::withMessages([
+                'start_date' => ["Tanggal event bentrok dengan event \"{$conflict->title}\" ({$conflict->start_date}" . ($conflict->end_date ? " s/d {$conflict->end_date}" : "") . ")."],
+            ]);
+        }
     }
 
     public function destroy($id)

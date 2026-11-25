@@ -35,8 +35,8 @@ class EmployeeSeeder extends Seeder
 
         $employees = [
             [
-                'employee_id'             => 'EMP-001',
-                'nip'                     => '1001',
+                'employee_id'             => '1001',
+                'nip'                     => '000001001',
                 'employee_password'       => Hash::make('1001'),
                 'full_name'               => 'Antika Lorien',
                 'email'                   => 'antika@lokahr.com',
@@ -51,8 +51,8 @@ class EmployeeSeeder extends Seeder
                 'is_active'               => true,
             ],
             [
-                'employee_id'             => 'EMP-002',
-                'nip'                     => '1002',
+                'employee_id'             => '1002',
+                'nip'                     => '000001002',
                 'employee_password'       => Hash::make('1002'),
                 'full_name'               => 'Budi Pratama',
                 'email'                   => 'budi@lokahr.com',
@@ -67,8 +67,8 @@ class EmployeeSeeder extends Seeder
                 'is_active'               => true,
             ],
             [
-                'employee_id'             => 'EMP-003',
-                'nip'                     => '1003',
+                'employee_id'             => '1003',
+                'nip'                     => '000001003',
                 'employee_password'       => Hash::make('1003'),
                 'full_name'               => 'Citra Dewi',
                 'email'                   => 'citra@lokahr.com',

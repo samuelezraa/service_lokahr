@@ -2,13 +2,15 @@
 
 namespace App\Models;
 
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Carbon\Carbon;
+use Spatie\Activitylog\LogOptions;
+use Spatie\Activitylog\Traits\LogsActivity;
 
 class Employee extends Model
 {
-    use HasFactory;
+    use HasFactory, LogsActivity;
 
     protected $fillable = [
         'employee_id',
@@ -33,7 +35,7 @@ class Employee extends Model
         'employee_password',
     ];
 
-  protected $casts = [
+    protected $casts = [
         'join_date'            => 'date:d-m-Y',
         'birth_date'           => 'date:d-m-Y',
         'age_years'            => 'integer',
@@ -42,8 +44,21 @@ class Employee extends Model
     ];
 
     /**
-     * Function phoneconvert: 
-     * Jika input awal "0", diganti menjadi "62". 
+     * Konfigurasi Spatie Activitylog untuk mencatat perubahan Before vs After
+     */
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->useLogName('Master Data')
+            ->logFillable()
+            ->logExcept(['employee_password'])
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs();
+    }
+
+    /**
+     * Function phoneconvert:
+     * Jika input awal "0", diganti menjadi "62".
      * Maksimal panjang karakter adalah 14.
      */
     public static function phoneconvert(?string $phone): ?string
@@ -55,9 +70,19 @@ class Employee extends Model
         // Bersihkan selain angka
         $phone = preg_replace('/[^0-9]/', '', $phone);
 
-        // Jika diawali "0", ganti dengan "62"
-        if (str_starts_with($phone, '0')) {
+        if ($phone === '') {
+            return null;
+        }
+
+        // Jika sudah diawali "62", biarkan apa adanya
+        if (str_starts_with($phone, '62')) {
+            // sudah format 62...
+        } elseif (str_starts_with($phone, '0')) {
+            // Jika diawali "0", ganti "0" di depan dengan "62"
             $phone = '62' . substr($phone, 1);
+        } elseif (str_starts_with($phone, '8')) {
+            // Jika diawali "8" (tanpa 0), tambahkan "62" di depan tanpa membuang "8"
+            $phone = '62' . $phone;
         }
 
         // Batasi maksimal 14 karakter
@@ -105,15 +130,19 @@ class Employee extends Model
         return $this->belongsTo(WorkScheduleScheme::class);
     }
 
-    
- /**
+    /**
      * Relasi ke AttendanceLogDetail berdasarkan NIP atau Employee ID
      */
     public function attendanceLogDetails()
     {
         return $this->hasMany(AttendanceLogDetail::class, 'nip', 'nip');
-        // Catatan: Jika relasi di tabel attendance_log_details menggunakan kolom 'nip', 
-        // pastikan parameter kedua dan ketiga sesuai dengan kolom penghubungnya di database.
     }
 
+    /**
+     * Relasi ke EmployeeAttendance (Rekapitulasi Kehadiran per Periode)
+     */
+    public function attendances()
+    {
+        return $this->hasMany(EmployeeAttendance::class, 'nip', 'nip');
+    }
 }
