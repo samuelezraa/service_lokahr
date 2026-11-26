@@ -133,8 +133,14 @@ class InputScheduleController extends Controller
             });
         }
 
-        if ($request->has('department_id') && !empty($request->department_id)) {
-            $query->where('department_id', $request->department_id);
+        $effectiveDeptId = $this->resolveEffectiveDepartmentId($request, $request->query('department_id'));
+        if (!empty($effectiveDeptId)) {
+            $query->where(function ($q) use ($effectiveDeptId) {
+                $q->where('department_id', $effectiveDeptId)
+                  ->orWhereHas('employee', function ($empQ) use ($effectiveDeptId) {
+                      $empQ->where('department_id', $effectiveDeptId);
+                  });
+            });
         }
 
         if ($request->has('sub_department_id') && !empty($request->sub_department_id)) {
@@ -200,7 +206,6 @@ class InputScheduleController extends Controller
         ]);
     }
 
-    
     /**
      * GET /api/schedule/input-schedule/weekly-hours
      */
@@ -240,6 +245,12 @@ class InputScheduleController extends Controller
     {
         $schedule = Schedule::with(['employee', 'department', 'subDepartment', 'scheduleDetails', 'dailyDetails'])
             ->findOrFail($id);
+
+        $effectiveDeptId = $this->resolveEffectiveDepartmentId($request);
+        $scheduleDeptId  = (string) ($schedule->department_id ?? $schedule->employee?->department_id ?? '');
+        if (!empty($effectiveDeptId) && $scheduleDeptId !== $effectiveDeptId) {
+            abort(403, 'Anda tidak memiliki akses untuk melihat jadwal departemen lain.');
+        }
 
         $periodCode = $schedule->period_code ?? $request->query('period');
         $periodModel = $periodCode ? Period::where('code', $periodCode)->first() : null;
@@ -351,7 +362,13 @@ class InputScheduleController extends Controller
 
     public function updateDetail(Request $request, $id)
     {
-        $schedule = Schedule::findOrFail($id);
+        $schedule = Schedule::with('employee')->findOrFail($id);
+
+        $effectiveDeptId = $this->resolveEffectiveDepartmentId($request);
+        $scheduleDeptId  = (string) ($schedule->department_id ?? $schedule->employee?->department_id ?? '');
+        if (!empty($effectiveDeptId) && $scheduleDeptId !== $effectiveDeptId) {
+            abort(403, 'Anda tidak memiliki akses untuk mengubah jadwal departemen lain.');
+        }
 
         $validated = $request->validate([
             'scheduleList' => 'required|array',
@@ -428,7 +445,16 @@ class InputScheduleController extends Controller
         ]);
 
         $days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-        $schedules = Schedule::all();
+
+        $effectiveDeptId = $this->resolveEffectiveDepartmentId($request);
+        $schedules = !empty($effectiveDeptId)
+            ? Schedule::where(function ($q) use ($effectiveDeptId) {
+                $q->where('department_id', $effectiveDeptId)
+                  ->orWhereHas('employee', function ($empQ) use ($effectiveDeptId) {
+                      $empQ->where('department_id', $effectiveDeptId);
+                  });
+            })->get()
+            : Schedule::all();
 
         foreach ($schedules as $schedule) {
             foreach ($days as $day) {
@@ -475,8 +501,10 @@ class InputScheduleController extends Controller
         ]);
 
         try {
-            $period = $request->input('period');
-            Excel::import(new InputScheduleImport($period), $request->file('file'));
+            $period        = $request->input('period');
+            $allowedDeptId = $this->resolveEffectiveDepartmentId($request);
+
+            Excel::import(new InputScheduleImport($period, $allowedDeptId), $request->file('file'));
 
             return response()->json([
                 'success' => true,
@@ -486,7 +514,7 @@ class InputScheduleController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal mengimport data: ' . $e->getMessage()
-            ], 500);
+            ], 422);
         }
     }
 
@@ -497,7 +525,7 @@ class InputScheduleController extends Controller
     {
         $period        = $request->query('period');
         $search        = $request->query('search');
-        $departmentId  = $request->query('department_id');
+        $departmentId  = $this->resolveEffectiveDepartmentId($request, $request->query('department_id'));
         $subDeptId     = $request->query('sub_department_id');
         $status        = $request->query('status');
 
@@ -512,24 +540,21 @@ class InputScheduleController extends Controller
     /**
      * 7. GET /api/schedule/input-schedule/sample
      */
+    public function downloadSample(Request $request)
+    {
+        $period = $request->query('period')
+            ?? Period::where('is_active', true)->orderBy('start_date')->value('code')
+            ?? date('Y-m');
+        $fileName = "sample-template-import-schedule-{$period}.csv";
 
-public function downloadSample(Request $request)
-{
-    $period = $request->query('period')
-        ?? Period::where('is_active', true)->orderBy('start_date')->value('code')
-        ?? date('Y-m');
-    $fileName = "sample-template-import-schedule-{$period}.csv";
+        return Excel::download(
+            new InputScheduleSampleExport($period),
+            $fileName,
+            \Maatwebsite\Excel\Excel::CSV
+        );
+    }
 
-    return Excel::download(
-        new InputScheduleSampleExport($period),
-        $fileName,
-        \Maatwebsite\Excel\Excel::CSV
-    );
-}
-
-    
-
-/**
+    /**
      * 8. GET /api/schedule/jadwalku
      */
     public function getMySchedule(Request $request)
@@ -644,7 +669,6 @@ public function downloadSample(Request $request)
         ]);
     }
 
-    
     /**
      * 9. POST /api/schedule/jadwalku/export
      */
@@ -674,7 +698,6 @@ public function downloadSample(Request $request)
         );
     }
 
-
     /**
      * 10. GET /api/schedule/jadwalku/{id}/export
      * Export jadwal & rekapitulasi harian per karyawan
@@ -700,9 +723,7 @@ public function downloadSample(Request $request)
         );
     }
 
-
-
-  private function isHrUser($user): bool
+    private function isHrUser($user): bool
     {
         if (!$user) {
             return false;
@@ -734,7 +755,4 @@ public function downloadSample(Request $request)
 
         return $requestedDeptId !== null && $requestedDeptId !== '' ? (string) $requestedDeptId : null;
     }
-
-
-  
 }

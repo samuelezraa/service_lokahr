@@ -16,10 +16,12 @@ use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
 class InputScheduleImport implements ToArray
 {
     protected ?string $overridePeriod;
+    protected ?string $allowedDepartmentId;
 
-    public function __construct(?string $overridePeriod = null)
+    public function __construct(?string $overridePeriod = null, ?string $allowedDepartmentId = null)
     {
-        $this->overridePeriod = $overridePeriod;
+        $this->overridePeriod      = $overridePeriod;
+        $this->allowedDepartmentId = $allowedDepartmentId;
     }
 
     private function parseExcelTime($value): string
@@ -121,6 +123,7 @@ class InputScheduleImport implements ToArray
 
             $employee = Employee::with(['department', 'subDepartment'])
                 ->where('nip', $nip)
+                ->orWhere('employee_id', $nip)
                 ->first();
 
             $departmentId   = $employee?->department_id;
@@ -128,12 +131,25 @@ class InputScheduleImport implements ToArray
             if ($deptVal !== '' && $deptVal !== '-') {
                 $deptObj = is_numeric($deptVal)
                     ? Department::find($deptVal)
-                    : Department::where('name', $deptVal)->first();
+                    : Department::where('name', $deptVal)->orWhere('code', $deptVal)->first();
                 if ($deptObj) {
                     $departmentId   = $deptObj->id;
                     $departmentName = $deptObj->name;
                 } else {
                     $departmentName = $deptVal;
+                }
+            }
+
+            // Validasi ketat untuk user non-HR: hanya boleh import karyawan dari departemennya sendiri
+            if (!empty($this->allowedDepartmentId)) {
+                $empDeptId = $employee?->department_id ? (string) $employee->department_id : null;
+                $rowDeptId = $departmentId ? (string) $departmentId : null;
+
+                if (!$employee || $empDeptId !== (string) $this->allowedDepartmentId || $rowDeptId !== (string) $this->allowedDepartmentId) {
+                    $displayName = $employee?->full_name ?? ($nama !== '' ? $nama : $nip);
+                    throw new \Exception(
+                        "Import ditolak pada baris " . ($r + 1) . ": Karyawan {$displayName} ({$nip}) bukan berasal dari departemen Anda."
+                    );
                 }
             }
 
@@ -193,11 +209,12 @@ class InputScheduleImport implements ToArray
             }
 
             $totalDays = count($dateColumns) > 0 ? count($dateColumns) : 30;
+            $targetNip = $employee?->nip ?? $nip;
 
             $schedule = Schedule::updateOrCreate(
                 [
                     'period_code' => $periodCode,
-                    'nip'         => $nip,
+                    'nip'         => $targetNip,
                 ],
                 [
                     'employee_id'         => $employee?->id,
