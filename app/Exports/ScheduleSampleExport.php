@@ -7,9 +7,18 @@ use App\Models\Schedule;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithCustomCsvSettings;
 
-class ScheduleSampleExport implements FromArray, WithHeadings, ShouldAutoSize
+class ScheduleSampleExport implements FromArray, WithHeadings, ShouldAutoSize, WithCustomCsvSettings
 {
+    public function getCsvSettings(): array
+    {
+        return [
+            'delimiter' => ';',
+            'use_bom'   => true,
+        ];
+    }
+
     public function array(): array
     {
         // Ambil 1 karyawan aktif yang memiliki skema kerja 5-2 sebagai contoh

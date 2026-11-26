@@ -11,7 +11,6 @@ class SubDepartmentController extends Controller
     {
         $query = SubDepartment::with('department');
 
-        // Filter Pencarian (nama atau kode sub departemen)
         if ($request->has('search') && !empty($request->search)) {
             $search = $request->search;
             $query->where(function($q) use ($search) {
@@ -20,12 +19,10 @@ class SubDepartmentController extends Controller
             });
         }
 
-        // Filter Departemen Induk
         if ($request->has('department_code') && !empty($request->department_code)) {
             $query->where('department_code', $request->department_code);
         }
 
-        // Filter Status Aktif/Non Aktif
         if ($request->has('status') && $request->status !== '') {
             $status = filter_var($request->status, FILTER_VALIDATE_BOOLEAN);
             $query->where('is_active', $status);
@@ -52,9 +49,17 @@ class SubDepartmentController extends Controller
     {
         $validated = $request->validate([
             'department_code' => 'required|exists:departments,code',
-            'code'            => 'required|string|unique:sub_departments,code',
-            'name'            => 'required|string|max:255',
+            'code'            => ['required', 'string', 'regex:/^DS\d{3}$/', 'unique:sub_departments,code'],
+            'name'            => ['required', 'string', 'max:255', 'unique:sub_departments,name'],
             'is_active'       => 'boolean',
+        ], [
+            'department_code.required' => 'Pilih Departemen induk',
+            'department_code.exists'   => 'Departemen induk tidak ditemukan',
+            'code.required'            => 'ID Sub Departemen wajib diisi',
+            'code.regex'               => 'Format ID Sub Departemen harus DSXXX (contoh: DS072)',
+            'code.unique'              => 'ID Sub Departemen sudah digunakan',
+            'name.required'            => 'Nama Sub Departemen wajib diisi',
+            'name.unique'              => 'Nama Sub Departemen sudah digunakan',
         ]);
 
         $subDepartment = SubDepartment::create($validated);
@@ -87,9 +92,17 @@ class SubDepartmentController extends Controller
 
         $validated = $request->validate([
             'department_code' => 'required|exists:departments,code',
-            'code'            => 'required|string|unique:sub_departments,code,' . $subDepartment->id,
-            'name'            => 'required|string|max:255',
+            'code'            => ['required', 'string', 'regex:/^DS\d{3}$/', 'unique:sub_departments,code,' . $subDepartment->id],
+            'name'            => ['required', 'string', 'max:255', 'unique:sub_departments,name,' . $subDepartment->id],
             'is_active'       => 'boolean',
+        ], [
+            'department_code.required' => 'Pilih Departemen induk',
+            'department_code.exists'   => 'Departemen induk tidak ditemukan',
+            'code.required'            => 'ID Sub Departemen wajib diisi',
+            'code.regex'               => 'Format ID Sub Departemen harus DSXXX (contoh: DS072)',
+            'code.unique'              => 'ID Sub Departemen sudah digunakan',
+            'name.required'            => 'Nama Sub Departemen wajib diisi',
+            'name.unique'              => 'Nama Sub Departemen sudah digunakan',
         ]);
 
         $subDepartment->update($validated);

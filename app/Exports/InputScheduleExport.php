@@ -7,6 +7,7 @@ use App\Models\Schedule;
 use Carbon\Carbon;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithCustomCsvSettings;
 use Maatwebsite\Excel\Concerns\WithEvents;
 use Maatwebsite\Excel\Events\AfterSheet;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
@@ -14,7 +15,7 @@ use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 
-class InputScheduleExport implements FromArray, WithEvents, ShouldAutoSize
+class InputScheduleExport implements FromArray, WithEvents, ShouldAutoSize, WithCustomCsvSettings
 {
     protected ?string $period;
     protected ?string $search;
@@ -58,6 +59,14 @@ class InputScheduleExport implements FromArray, WithEvents, ShouldAutoSize
             $this->dates[] = $cursor->copy();
             $cursor->addDay();
         }
+    }
+
+    public function getCsvSettings(): array
+    {
+        return [
+            'delimiter' => ';',
+            'use_bom'   => true,
+        ];
     }
 
     protected function findPeriodModel(?string $period): ?Period

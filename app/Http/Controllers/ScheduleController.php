@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Schedule;
-use App\Models\ScheduleDetail; // 👈 Wajib ditambahkan
+use App\Models\ScheduleDetail;
 use App\Models\Department;
 use App\Models\SubDepartment;
 use App\Models\Employee;
@@ -15,24 +15,69 @@ use App\Exports\ScheduleSampleExport;
 
 class ScheduleController extends Controller
 {
- public function index(Request $request)
+    public function index(Request $request)
     {
+        // 1. Bersihkan jadwal karyawan yang skema kerjanya sudah bukan Skema 5-2 atau statusnya tidak aktif
+        $inactiveOrNonFiveTwoEmployeeIds = Employee::with('workScheduleScheme')
+            ->get()
+            ->filter(fn (Employee $emp) => !(bool) $emp->is_active || !$emp->isFiveTwoScheme())
+            ->pluck('id');
+
+        if ($inactiveOrNonFiveTwoEmployeeIds->isNotEmpty()) {
+            Schedule::whereIn('employee_id', $inactiveOrNonFiveTwoEmployeeIds)->delete();
+        }
+
+        // 2. Sinkronisasi karyawan aktif berskema 5-2 yang belum memiliki baris di schedules atau datanya belum sinkron
+        $activeFiveTwoEmployees = Employee::with(['department', 'subDepartment', 'workScheduleScheme'])
+            ->where('is_active', true)
+            ->get()
+            ->filter(fn (Employee $emp) => $emp->isFiveTwoScheme());
+
+        foreach ($activeFiveTwoEmployees as $emp) {
+            $existing = Schedule::where('employee_id', $emp->id)->first();
+            if (
+                !$existing ||
+                $existing->employee_name !== $emp->full_name ||
+                $existing->nip !== $emp->nip ||
+                (int) $existing->department_id !== (int) $emp->department_id ||
+                (int) $existing->sub_department_id !== (int) $emp->sub_department_id ||
+                (int) $existing->work_schedule_scheme_id !== (int) $emp->work_schedule_scheme_id ||
+                (bool) $existing->is_active !== true
+            ) {
+                $emp->syncToSchedule();
+            }
+        }
+
+        // 3. Ambil hanya jadwal aktif milik karyawan aktif yang skema kerjanya Skema 5-2
         $query = Schedule::with([
             'scheduleDetails',
             'scheduleSchemes.workScheduleScheme',
-            'employee',
+            'employee.department',
+            'employee.subDepartment',
+            'employee.workScheduleScheme',
             'department',
             'subDepartment'
-        ])->whereNotNull('employee_id');
+        ])
+            ->whereNotNull('employee_id')
+            ->where('is_active', true)
+            ->whereHas('employee', function ($empQ) {
+                $empQ->where('is_active', true);
+            })
+            ->whereHas('employee.workScheduleScheme', function ($schemeQ) {
+                $schemeQ->where('name', 'like', '%5-2%')
+                        ->orWhere('code', 'like', '%5-2%')
+                        ->orWhere('name', 'like', '%52%');
+            });
 
         if ($request->has('search') && !empty($request->search)) {
             $search = $request->search;
-            $query->where(function($q) use ($search) {
+            $query->where(function ($q) use ($search) {
                 $q->where('nip', 'like', "%{$search}%")
                   ->orWhere('employee_name', 'like', "%{$search}%")
-                  ->orWhere('name', 'like', "%{$search}%")
-                  ->orWhereHas('employee', function($empQ) use ($search) {
-                      $empQ->where('employee_id', 'like', "%{$search}%");
+                  ->orWhereHas('employee', function ($empQ) use ($search) {
+                      $empQ->where('employee_id', 'like', "%{$search}%")
+                           ->orWhere('full_name', 'like', "%{$search}%")
+                           ->orWhere('nip', 'like', "%{$search}%");
                   });
             });
         }
@@ -45,23 +90,22 @@ class ScheduleController extends Controller
             $query->where('sub_department_id', $request->sub_department_id);
         }
 
-        if ($request->has('status') && $request->status !== null && $request->status !== '') {
-            $status = filter_var($request->status, FILTER_VALIDATE_BOOLEAN);
-            $query->where('is_active', $status);
-        }
-
         $perPage = $request->input('per_page', 25);
         $schedules = $query->latest()->paginate($perPage);
 
-        // 🟢 MAPPING: Ambil employee_id asli karyawan (EMP-001) dari relasi 'employee'
         $mappedItems = collect($schedules->items())->map(function ($sch) {
             $schData = $sch->toArray();
-            
-            // Ambil string ID Karyawan (misal EMP-001), jika tidak ada baru fallback ke nip
-            $employeeCode = $sch->employee?->employee_id ?? $sch->nip ?? '-';
 
-            $schData['employee_id_code'] = $employeeCode;
-            $schData['display_id']       = $employeeCode;
+            $employeeCode = $sch->employee?->employee_id ?? $sch->nip ?? '-';
+            $latestName   = $sch->employee?->full_name ?? $sch->employee_name ?? '-';
+
+            $schData['employee_id_code']    = $employeeCode;
+            $schData['display_id']          = $employeeCode;
+            $schData['employee_name']       = $latestName;
+            $schData['name']                = $latestName;
+            $schData['department_name']     = $sch->employee?->department?->name ?? $sch->department?->name ?? $sch->department_name;
+            $schData['sub_department_name'] = $sch->employee?->subDepartment?->name ?? $sch->subDepartment?->name ?? $sch->sub_department_name;
+            $schData['is_active']           = true;
             return $schData;
         });
 
@@ -82,7 +126,7 @@ class ScheduleController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name'              => 'nullable|string|max:255',
+            'employee_name'     => 'nullable|string|max:255',
             'employee_id'       => 'nullable|exists:employees,id',
             'department_id'     => 'nullable|exists:departments,id',
             'sub_department_id' => 'nullable|exists:sub_departments,id',
@@ -120,7 +164,7 @@ class ScheduleController extends Controller
 
         // 1. Validasi field induk & payload mingguan 7 hari
         $validated = $request->validate([
-            'name'              => 'sometimes|nullable|string|max:255',
+            'employee_name'     => 'sometimes|nullable|string|max:255',
             'department_id'     => 'sometimes|nullable|exists:departments,id',
             'sub_department_id' => 'sometimes|nullable|exists:sub_departments,id',
             'is_active'         => 'boolean',
@@ -142,7 +186,7 @@ class ScheduleController extends Controller
         foreach ($days as $day) {
             if ($request->has($day) && is_array($request->$day)) {
                 $dayData = $request->$day;
-                
+
                 $status = $dayData['status'] ?? 'Berangkat';
                 $checkIn = $dayData['check_in_time'] ?? '00:00:00';
                 $checkOut = $dayData['check_out_time'] ?? '00:00:00';
@@ -186,7 +230,7 @@ class ScheduleController extends Controller
         ]);
     }
 
-   public function export(Request $request)
+    public function export(Request $request)
     {
         $selectedIds = $request->query('selectedIds');
         $idsArray = $selectedIds ? explode(',', $selectedIds) : [];
@@ -195,12 +239,13 @@ class ScheduleController extends Controller
             'search'            => $request->query('search'),
             'department_id'     => $request->query('department_id'),
             'sub_department_id' => $request->query('sub_department_id'),
-            'status'            => $request->query('status'),
+            'status'            => true,
         ];
 
         return Excel::download(
             new ScheduleExport($idsArray, $filters),
-            'Jam_Kerja_Skema_5-2_' . date('Y-m-d') . '.csv'
+            'Jam_Kerja_Skema_5-2_' . date('Y-m-d') . '.csv',
+            \Maatwebsite\Excel\Excel::CSV
         );
     }
 
@@ -208,7 +253,8 @@ class ScheduleController extends Controller
     {
         return Excel::download(
             new ScheduleSampleExport(),
-            'Sample_Import_Jam_Kerja_Skema_5-2.csv'
+            'Sample_Import_Jam_Kerja_Skema_5-2.csv',
+            \Maatwebsite\Excel\Excel::CSV
         );
     }
 }

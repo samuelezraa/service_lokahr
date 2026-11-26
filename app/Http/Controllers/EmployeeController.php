@@ -74,12 +74,21 @@ class EmployeeController extends Controller
 
     public function store(Request $request)
     {
+        if ($request->has('email')) {
+            $trimmedEmail = is_string($request->input('email'))
+                ? strtolower(trim($request->input('email')))
+                : $request->input('email');
+            $request->merge([
+                'email' => $trimmedEmail === '' ? null : $trimmedEmail,
+            ]);
+        }
+
         $validated = $request->validate([
             'employee_id'             => 'required|string|digits:4|unique:employees,employee_id',
             'nip'                     => 'required|string|digits:9|unique:employees,nip',
             'full_name'               => 'required|string|max:255',
-            'email'                   => 'nullable|email|max:255',
-            'phone'                   => 'required|string|max:14',
+            'email'                   => ['nullable', 'string', 'max:255', 'email:rfc', 'regex:/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/', 'unique:employees,email'],
+            'phone'                   => ['required', 'string', 'max:14', 'regex:/^(08|8|62)\d+$/'],
             'department_id'           => 'required|exists:departments,id',
             'sub_department_id'       => 'required|exists:sub_departments,id',
             'position_id'             => 'required|exists:positions,id',
@@ -95,7 +104,13 @@ class EmployeeController extends Controller
             'nip.required'         => 'NIP wajib diisi.',
             'nip.digits'           => 'NIP harus terdiri dari 9 digit angka.',
             'nip.unique'           => 'NIP sudah digunakan.',
+            'email.email'          => 'Format email tidak valid.',
+            'email.regex'          => 'Format email harus menggunakan domain yang valid (contoh: nama@domain.com).',
+            'email.max'            => 'Email maksimal 255 karakter.',
+            'email.unique'         => 'Email sudah digunakan oleh karyawan lain.',
             'phone.required'       => 'Nomor telepon wajib diisi.',
+            'phone.max'            => 'Nomor telepon maksimal 14 digit.',
+            'phone.regex'          => 'Nomor telepon harus diawali dengan 08, 8, atau 62.',
         ]);
 
         // Konversi nomor telepon lalu cek keunikannya di database
@@ -154,12 +169,21 @@ class EmployeeController extends Controller
     {
         $employee = Employee::findOrFail($id);
 
+        if ($request->has('email')) {
+            $trimmedEmail = is_string($request->input('email'))
+                ? strtolower(trim($request->input('email')))
+                : $request->input('email');
+            $request->merge([
+                'email' => $trimmedEmail === '' ? null : $trimmedEmail,
+            ]);
+        }
+
         $validated = $request->validate([
             'employee_id'             => 'required|string|digits:4|unique:employees,employee_id,' . $employee->id,
             'nip'                     => 'required|string|digits:9|unique:employees,nip,' . $employee->id,
             'full_name'               => 'required|string|max:255',
-            'email'                   => 'nullable|email|max:255',
-            'phone'                   => 'required|string|max:14',
+            'email'                   => ['nullable', 'string', 'max:255', 'email:rfc', 'regex:/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/', 'unique:employees,email,' . $employee->id],
+            'phone'                   => ['required', 'string', 'max:14', 'regex:/^(08|8|62)\d+$/'],
             'department_id'           => 'required|exists:departments,id',
             'sub_department_id'       => 'required|exists:sub_departments,id',
             'position_id'             => 'required|exists:positions,id',
@@ -175,7 +199,13 @@ class EmployeeController extends Controller
             'nip.required'         => 'NIP wajib diisi.',
             'nip.digits'           => 'NIP harus terdiri dari 9 digit angka.',
             'nip.unique'           => 'NIP sudah digunakan.',
+            'email.email'          => 'Format email tidak valid.',
+            'email.regex'          => 'Format email harus menggunakan domain yang valid (contoh: nama@domain.com).',
+            'email.max'            => 'Email maksimal 255 karakter.',
+            'email.unique'         => 'Email sudah digunakan oleh karyawan lain.',
             'phone.required'       => 'Nomor telepon wajib diisi.',
+            'phone.max'            => 'Nomor telepon maksimal 14 digit.',
+            'phone.regex'          => 'Nomor telepon harus diawali dengan 08, 8, atau 62.',
         ]);
 
         // Konversi nomor telepon lalu cek keunikannya (kecuali data yang sedang diedit)

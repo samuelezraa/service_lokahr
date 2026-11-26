@@ -6,8 +6,9 @@ use App\Models\Schedule;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithCustomCsvSettings;
 
-class MyScheduleExport implements FromArray, WithHeadings, ShouldAutoSize
+class MyScheduleExport implements FromArray, WithHeadings, ShouldAutoSize, WithCustomCsvSettings
 {
     protected ?string $period;
     protected array $selectedIds;
@@ -30,6 +31,14 @@ class MyScheduleExport implements FromArray, WithHeadings, ShouldAutoSize
         $this->departmentId  = $departmentId;
         $this->subDepartment = $subDepartment;
         $this->grade         = $grade;
+    }
+
+    public function getCsvSettings(): array
+    {
+        return [
+            'delimiter' => ';',
+            'use_bom'   => true,
+        ];
     }
 
     public function array(): array

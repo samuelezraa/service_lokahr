@@ -19,13 +19,101 @@ use Maatwebsite\Excel\Facades\Excel;
 class InputScheduleController extends Controller
 {
     /**
+     * Sinkronisasi karyawan ke baris Schedule untuk periode tertentu
+     */
+    private function syncEmployeesForPeriod(string $periodCode): void
+    {
+        $periodModel = Period::where('code', $periodCode)->first();
+        if (!$periodModel || !$periodModel->start_date || !$periodModel->end_date) {
+            return;
+        }
+
+        $startDate = Carbon::parse($periodModel->start_date)->startOfDay();
+        $endDate   = Carbon::parse($periodModel->end_date)->startOfDay();
+
+        $totalDays  = $startDate->diffInDays($endDate) + 1;
+        $workDays   = 0;
+        $offDays    = 0;
+
+        $cursor = $startDate->copy();
+        while ($cursor->lte($endDate)) {
+            $dow = (int) $cursor->format('w'); // 0 = Minggu, 6 = Sabtu
+            if ($dow === 0 || $dow === 6) {
+                $offDays++;
+            } else {
+                $workDays++;
+            }
+            $cursor->addDay();
+        }
+
+        $employees = Employee::with(['department', 'subDepartment', 'workScheduleScheme'])->get();
+
+        foreach ($employees as $emp) {
+            $schemeName = $emp->workScheduleScheme?->name ?? $emp->workScheduleScheme?->code ?? 'Skema 5-2';
+            $deptName   = $emp->department?->name;
+            $subName    = $emp->subDepartment?->name;
+
+            $existing = Schedule::where('employee_id', $emp->id)
+                ->where('period_code', $periodCode)
+                ->first();
+
+            if (!$existing) {
+                Schedule::create([
+                    'period_id'               => $periodModel->id,
+                    'period_code'             => $periodCode,
+                    'employee_id'             => $emp->id,
+                    'nip'                     => $emp->nip,
+                    'employee_name'           => $emp->full_name,
+                    'department_id'           => $emp->department_id,
+                    'department_name'         => $deptName,
+                    'sub_department_id'       => $emp->sub_department_id,
+                    'sub_department_name'     => $subName,
+                    'work_schedule_scheme_id' => $emp->work_schedule_scheme_id,
+                    'work_scheme'             => $schemeName,
+                    'total_days'              => $totalDays,
+                    'work_days'               => $workDays,
+                    'off_days'                => $offDays,
+                    'ph_days'                 => 0,
+                    'permit_days'             => 0,
+                    'alpha_days'              => 0,
+                    'sick_days'               => 0,
+                    'leave_days'              => 0,
+                    'late_days'               => 0,
+                    'ref'                     => $periodCode,
+                    'is_active'               => (bool) $emp->is_active,
+                ]);
+            } else {
+                $existing->update([
+                    'period_id'               => $periodModel->id,
+                    'nip'                     => $emp->nip,
+                    'employee_name'           => $emp->full_name,
+                    'department_id'           => $emp->department_id,
+                    'department_name'         => $deptName,
+                    'sub_department_id'       => $emp->sub_department_id,
+                    'sub_department_name'     => $subName,
+                    'work_schedule_scheme_id' => $emp->work_schedule_scheme_id,
+                    'work_scheme'             => $schemeName,
+                    'total_days'              => $existing->total_days ?: $totalDays,
+                    'work_days'               => ($existing->work_days || $existing->off_days) ? $existing->work_days : $workDays,
+                    'off_days'                => ($existing->work_days || $existing->off_days) ? $existing->off_days : $offDays,
+                    'is_active'               => (bool) $emp->is_active,
+                ]);
+            }
+        }
+    }
+
+    /**
      * 1. GET /api/schedule/input-schedule
      */
     public function index(Request $request)
     {
         $period = $request->query('period');
 
-        $query = Schedule::with(['employee', 'department', 'subDepartment'])
+        if (!empty($period)) {
+            $this->syncEmployeesForPeriod((string) $period);
+        }
+
+        $query = Schedule::with(['employee.department', 'employee.subDepartment', 'employee.workScheduleScheme', 'department', 'subDepartment'])
             ->whereNotNull('employee_id');
 
         if (!empty($period)) {
@@ -37,7 +125,11 @@ class InputScheduleController extends Controller
             $query->where(function ($q) use ($search) {
                 $q->where('nip', 'like', "%{$search}%")
                   ->orWhere('employee_name', 'like', "%{$search}%")
-                  ->orWhere('name', 'like', "%{$search}%");
+                  ->orWhereHas('employee', function ($empQ) use ($search) {
+                      $empQ->where('full_name', 'like', "%{$search}%")
+                           ->orWhere('nip', 'like', "%{$search}%")
+                           ->orWhere('employee_id', 'like', "%{$search}%");
+                  });
             });
         }
 
@@ -73,13 +165,13 @@ class InputScheduleController extends Controller
             return [
                 'id'                => (string) $sch->id,
                 'periodId'          => $sch->period_code ?? '-',
-                'nip'               => $sch->nip ?? $sch->employee?->nip ?? '-',
-                'name'              => $sch->employee_name ?? $sch->employee?->full_name ?? '-',
-                'department_id'     => $sch->department_id,
-                'department'        => $sch->department_name ?? $sch->department?->name ?? '-',
-                'sub_department_id' => $sch->sub_department_id,
-                'subDept'           => $sch->sub_department_name ?? $sch->subDepartment?->name ?? '-',
-                'workScheme'        => $sch->work_scheme ?? 'Skema 5-2',
+                'nip'               => $sch->employee?->nip ?? $sch->nip ?? '-',
+                'name'              => $sch->employee?->full_name ?? $sch->employee_name ?? '-',
+                'department_id'     => $sch->employee?->department_id ?? $sch->department_id,
+                'department'        => $sch->employee?->department?->name ?? $sch->department_name ?? $sch->department?->name ?? '-',
+                'sub_department_id' => $sch->employee?->sub_department_id ?? $sch->sub_department_id,
+                'subDept'           => $sch->employee?->subDepartment?->name ?? $sch->sub_department_name ?? $sch->subDepartment?->name ?? '-',
+                'workScheme'        => $sch->employee?->workScheduleScheme?->name ?? $sch->work_scheme ?? 'Skema 5-2',
                 'status'            => $sch->is_active ? 'Aktif' : 'Nonaktif',
                 'totalDays'         => (int) $sch->total_days,
                 'workDays'          => (int) $sch->work_days,
@@ -142,7 +234,8 @@ class InputScheduleController extends Controller
     /**
      * 2. GET /api/schedule/input-schedule/edit/{id}
      * Mendukung rentang tanggal lintas bulan berdasarkan Master Period (start_date s.d. end_date)
-     */public function showDetail(Request $request, $id)
+     */
+    public function showDetail(Request $request, $id)
     {
         $schedule = Schedule::with(['employee', 'department', 'subDepartment', 'scheduleDetails', 'dailyDetails'])
             ->findOrFail($id);
@@ -232,12 +325,12 @@ class InputScheduleController extends Controller
             'success' => true,
             'employeeInfo' => [
                 'id'            => $schedule->id,
-                'name'          => $schedule->employee_name ?? $schedule->employee?->full_name ?? '-',
-                'nip'           => $schedule->nip ?? $schedule->employee?->nip ?? '-',
+                'name'          => $schedule->employee?->full_name ?? $schedule->employee_name ?? '-',
+                'nip'           => $schedule->employee?->nip ?? $schedule->nip ?? '-',
                 'period'        => $periodLabel,
                 'dateRange'     => $startDate->format('Y-m-d') . ' — ' . $endDate->format('Y-m-d'),
-                'department'    => $schedule->department_name ?? $schedule->department?->name ?? '-',
-                'subDepartment' => $schedule->sub_department_name ?? $schedule->subDepartment?->name ?? '-',
+                'department'    => $schedule->employee?->department?->name ?? $schedule->department_name ?? $schedule->department?->name ?? '-',
+                'subDepartment' => $schedule->employee?->subDepartment?->name ?? $schedule->sub_department_name ?? $schedule->subDepartment?->name ?? '-',
                 'scheme'        => $schedule->work_scheme ?? 'Skema 5-2',
                 'hoursPerDay'   => 9,
                 'summary'       => [
@@ -418,15 +511,20 @@ class InputScheduleController extends Controller
     /**
      * 7. GET /api/schedule/input-schedule/sample
      */
-    public function downloadSample(Request $request)
-    {
-        $period = $request->query('period')
-            ?? Period::where('is_active', true)->orderBy('start_date')->value('code')
-            ?? date('Y-m');
-        $fileName = "sample-template-import-schedule-{$period}.csv";
 
-        return Excel::download(new InputScheduleSampleExport($period), $fileName);
-    }
+public function downloadSample(Request $request)
+{
+    $period = $request->query('period')
+        ?? Period::where('is_active', true)->orderBy('start_date')->value('code')
+        ?? date('Y-m');
+    $fileName = "sample-template-import-schedule-{$period}.csv";
+
+    return Excel::download(
+        new InputScheduleSampleExport($period),
+        $fileName,
+        \Maatwebsite\Excel\Excel::CSV
+    );
+}
 
     /**
      * 8. GET /api/schedule/jadwalku
@@ -514,7 +612,7 @@ class InputScheduleController extends Controller
         ]);
     }
 
-   /**
+    /**
      * 9. POST /api/schedule/jadwalku/export
      */
     public function exportMySchedule(Request $request)
@@ -541,8 +639,6 @@ class InputScheduleController extends Controller
             $fileName
         );
     }
-
-
 
     /**
      * 10. GET /api/schedule/jadwalku/{id}/export

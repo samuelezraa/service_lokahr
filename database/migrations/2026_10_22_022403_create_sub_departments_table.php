@@ -11,17 +11,16 @@ return new class extends Migration
      */
     public function up(): void
     {
-       Schema::create('sub_departments', function (Blueprint $table) {
-        $table->id();
-        $table->string('code')->unique();
-        $table->string('department_code'); // 👈 Pastikan nama kolomnya department_code
-        $table->string('name');
-        $table->boolean('is_active')->default(true);
-        $table->timestamps();
+        Schema::create('sub_departments', function (Blueprint $table) {
+            $table->id();
+            $table->string('code')->unique();
+            $table->string('department_code');
+            $table->string('name')->unique();
+            $table->boolean('is_active')->default(true);
+            $table->timestamps();
 
-        // Opsional: Foreign key ke tabel departments
-        $table->foreign('department_code')->references('code')->on('departments')->onDelete('cascade');
-    });
+            $table->foreign('department_code')->references('code')->on('departments')->onDelete('cascade');
+        });
     }
 
     /**

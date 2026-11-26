@@ -10,9 +10,10 @@ use Maatwebsite\Excel\Concerns\FromCollection;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithMapping;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithCustomCsvSettings;
 use Illuminate\Support\Enumerable;
 
-class EmployeeScheduleDetailExport implements FromCollection, WithHeadings, WithMapping, ShouldAutoSize
+class EmployeeScheduleDetailExport implements FromCollection, WithHeadings, WithMapping, ShouldAutoSize, WithCustomCsvSettings
 {
     protected Schedule $schedule;
     protected string $periodCode;
@@ -45,6 +46,14 @@ class EmployeeScheduleDetailExport implements FromCollection, WithHeadings, With
             $this->startDate = Carbon::now()->startOfMonth();
             $this->endDate   = $this->startDate->copy()->endOfMonth();
         }
+    }
+
+    public function getCsvSettings(): array
+    {
+        return [
+            'delimiter' => ';',
+            'use_bom'   => true,
+        ];
     }
 
     public function collection(): Enumerable

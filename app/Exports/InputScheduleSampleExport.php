@@ -6,15 +6,9 @@ use App\Models\Employee;
 use App\Models\Period;
 use Carbon\Carbon;
 use Maatwebsite\Excel\Concerns\FromArray;
-use Maatwebsite\Excel\Concerns\WithEvents;
-use Maatwebsite\Excel\Concerns\ShouldAutoSize;
-use Maatwebsite\Excel\Events\AfterSheet;
-use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
-use PhpOffice\PhpSpreadsheet\Style\Alignment;
-use PhpOffice\PhpSpreadsheet\Style\Border;
-use PhpOffice\PhpSpreadsheet\Style\Fill;
+use Maatwebsite\Excel\Concerns\WithCustomCsvSettings;
 
-class InputScheduleSampleExport implements FromArray, WithEvents, ShouldAutoSize
+class InputScheduleSampleExport implements FromArray, WithCustomCsvSettings
 {
     protected string $periodCode;
     protected array $dates = [];
@@ -42,6 +36,19 @@ class InputScheduleSampleExport implements FromArray, WithEvents, ShouldAutoSize
             $this->dates[] = $cursor->copy();
             $cursor->addDay();
         }
+    }
+
+    public function getCsvSettings(): array
+    {
+        return [
+            'delimiter'        => ';',
+            'enclosure'        => '"',
+            'line_ending'      => PHP_EOL,
+            'use_bom'          => true,
+            'include_separator_line' => false,
+            'excel_compatibility'    => false,
+            'output_encoding'  => 'UTF-8',
+        ];
     }
 
     protected function findPeriodModel(?string $period): ?Period
@@ -72,7 +79,7 @@ class InputScheduleSampleExport implements FromArray, WithEvents, ShouldAutoSize
     {
         $dayCount = count($this->dates);
 
-        // Baris 1 Header
+       // Baris 1 Header
         $headerRow1 = [
             'Periode',
             'NIP',
@@ -80,13 +87,12 @@ class InputScheduleSampleExport implements FromArray, WithEvents, ShouldAutoSize
             'Departemen',
             'Sub Departemen',
             'Skema Hari Kerja',
-            'Jam masuk',
         ];
-        for ($i = 1; $i < $dayCount; $i++) {
-            $headerRow1[] = '';
+        foreach ($this->dates as $dateObj) {
+            $headerRow1[] = 'Jam masuk (' . $dateObj->format('d-m-Y') . ')';
         }
 
-        // Baris 2 Header (Nomor tanggal sesuai start_date s.d. end_date, misal 21..30 lalu 1..20)
+        // Baris 2 Header (A..F dikosongkan agar tidak duplikat, G.. dst diisi nomor tanggal)
         $headerRow2 = ['', '', '', '', '', ''];
         foreach ($this->dates as $dateObj) {
             $headerRow2[] = (int) $dateObj->format('j');
@@ -131,46 +137,5 @@ class InputScheduleSampleExport implements FromArray, WithEvents, ShouldAutoSize
         }
 
         return $rows;
-    }
-
-    public function registerEvents(): array
-    {
-        return [
-            AfterSheet::class => function (AfterSheet $event) {
-                $sheet = $event->sheet->getDelegate();
-                $dayCount = count($this->dates);
-                $lastColIndex = 6 + $dayCount;
-                $lastColLetter = Coordinate::stringFromColumnIndex($lastColIndex);
-
-                // Merge vertikal kolom A..F (baris 1 & 2)
-                foreach (['A', 'B', 'C', 'D', 'E', 'F'] as $col) {
-                    $sheet->mergeCells("{$col}1:{$col}2");
-                }
-
-                // Merge horizontal "Jam masuk" dari G1 sampai kolom tanggal terakhir
-                if ($dayCount > 0) {
-                    $sheet->mergeCells("G1:{$lastColLetter}1");
-                }
-
-                // Styling Header
-                $sheet->getStyle("A1:{$lastColLetter}2")->applyFromArray([
-                    'font' => ['bold' => true],
-                    'alignment' => [
-                        'horizontal' => Alignment::HORIZONTAL_CENTER,
-                        'vertical' => Alignment::VERTICAL_CENTER,
-                    ],
-                    'fill' => [
-                        'fillType' => Fill::FILL_SOLID,
-                        'startColor' => ['rgb' => 'F3F4F6'],
-                    ],
-                    'borders' => [
-                        'allBorders' => [
-                            'borderStyle' => Border::BORDER_THIN,
-                            'color' => ['rgb' => 'D1D5DB'],
-                        ],
-                    ],
-                ]);
-            },
-        ];
     }
 }

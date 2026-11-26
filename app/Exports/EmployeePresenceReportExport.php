@@ -9,8 +9,9 @@ use Carbon\Carbon;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithCustomCsvSettings;
 
-class EmployeePresenceReportExport implements FromArray, WithHeadings, ShouldAutoSize
+class EmployeePresenceReportExport implements FromArray, WithHeadings, ShouldAutoSize, WithCustomCsvSettings
 {
     protected ?string $search;
     protected ?string $periode;
@@ -27,6 +28,14 @@ class EmployeePresenceReportExport implements FromArray, WithHeadings, ShouldAut
         $this->periode   = $periode;
         $this->startDate = $startDate;
         $this->endDate   = $endDate;
+    }
+
+    public function getCsvSettings(): array
+    {
+        return [
+            'delimiter' => ';',
+            'use_bom'   => true,
+        ];
     }
 
     public function array(): array
@@ -65,13 +74,7 @@ class EmployeePresenceReportExport implements FromArray, WithHeadings, ShouldAut
             $query->where('name', 'like', "%{$this->search}%");
         }
 
-        if ($isDateFiltered) {
-            $query->whereHas('employees.attendanceLogDetails', function ($q) use ($applyDateFilter) {
-                $applyDateFilter($q);
-            });
-        }
-
-        $departments = $query->get();
+        $departments = $query->orderBy('name')->get();
         $data = [];
         $index = 1;
         $grandTotalPax = 0;
@@ -87,14 +90,23 @@ class EmployeePresenceReportExport implements FromArray, WithHeadings, ShouldAut
 
             if ($isDateFiltered) {
                 $applyDateFilter($paxQuery);
-                $totalPax = $paxQuery->count();
-            } else {
-                $totalPax = $paxQuery->count();
-                if ($totalPax === 0) {
-                    $totalPax = $dept->employees()->where('is_active', true)->count();
-                }
             }
 
+           $logs = (clone $paxQuery)->with('employee')->get();
+
+            $totalPax = $logs->map(function ($log) {
+                $nip = trim((string) ($log->nip ?? ''));
+                if ($nip !== '') {
+                    return 'nip:' . strtolower($nip);
+                }
+                if ($log->employee?->id) {
+                    return 'emp:' . $log->employee->id;
+                }
+                $name = trim((string) ($log->employee_name ?? $log->employee?->full_name ?? ''));
+                return $name !== '' ? 'name:' . strtolower($name) : null;
+            })->filter()->unique()->count();
+
+            $totalPax = (int) $totalPax;
             $grandTotalPax += $totalPax;
 
             $data[] = [
@@ -107,7 +119,7 @@ class EmployeePresenceReportExport implements FromArray, WithHeadings, ShouldAut
         $data[] = [
             '',
             'TOTAL SELURUHNYA',
-            $grandTotalPax,
+            (int) $grandTotalPax,
         ];
 
         return $data;
