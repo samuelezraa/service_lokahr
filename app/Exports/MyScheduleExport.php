@@ -49,6 +49,16 @@ class MyScheduleExport implements FromArray, WithHeadings, ShouldAutoSize, WithC
             $query->where('period_code', $this->period);
         }
 
+        if (!empty($this->departmentId)) {
+            $deptId = $this->departmentId;
+            $query->where(function ($q) use ($deptId) {
+                $q->where('department_id', $deptId)
+                  ->orWhereHas('employee', function ($empQ) use ($deptId) {
+                      $empQ->where('department_id', $deptId);
+                  });
+            });
+        }
+
         // Jika ada baris yang dicentang (selected), export baris yang dicentang saja
         if (!empty($this->selectedIds)) {
             $query->whereIn('id', $this->selectedIds);
@@ -64,10 +74,6 @@ class MyScheduleExport implements FromArray, WithHeadings, ShouldAutoSize, WithC
                                ->orWhere('nip', 'like', "%{$search}%");
                       });
                 });
-            }
-
-            if (!empty($this->departmentId)) {
-                $query->where('department_id', $this->departmentId);
             }
 
             if (!empty($this->subDepartment)) {

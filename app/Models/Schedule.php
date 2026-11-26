@@ -84,10 +84,10 @@ class Schedule extends Model
         return $this->hasMany(ScheduleScheme::class);
     }
 
-    public function dailyDetails()
-    {
-        return $this->hasMany(ScheduleDailyDetail::class);
-    }
+  public function dailyDetails()
+{
+    return $this->hasMany(ScheduleDailyDetail::class, 'schedule_id');
+}
 
     public function getActivitylogOptions(): LogOptions
     {

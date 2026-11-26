@@ -17,6 +17,7 @@ class EmployeeScheduleDetailExport implements FromCollection, WithHeadings, With
 {
     protected Schedule $schedule;
     protected string $periodCode;
+    protected ?Period $periodModel = null;
     protected Carbon $startDate;
     protected Carbon $endDate;
 
@@ -31,13 +32,13 @@ class EmployeeScheduleDetailExport implements FromCollection, WithHeadings, With
         ]);
         $this->periodCode = $periodCode ?: ($this->schedule->period_code ?? '');
 
-        $periodModel = $this->periodCode
+        $this->periodModel = $this->periodCode
             ? Period::where('code', $this->periodCode)->first()
             : null;
 
-        if ($periodModel) {
-            $this->startDate = Carbon::parse($periodModel->start_date);
-            $this->endDate   = Carbon::parse($periodModel->end_date);
+        if ($this->periodModel) {
+            $this->startDate = Carbon::parse($this->periodModel->start_date);
+            $this->endDate   = Carbon::parse($this->periodModel->end_date);
         } elseif (!empty($this->periodCode) && str_contains($this->periodCode, '-')) {
             [$year, $month]  = explode('-', $this->periodCode);
             $this->startDate = Carbon::createFromDate((int) $year, (int) $month, 1);
@@ -109,6 +110,13 @@ class EmployeeScheduleDetailExport implements FromCollection, WithHeadings, With
             $cuti      = 0;
             $terlambat = 0;
 
+            $rawStatus = strtolower(trim((string) (
+                $actualLog->status
+                ?? $actualLog->attendance_status
+                ?? $detail->attendance_status
+                ?? ''
+            )));
+
             // Prioritaskan status harian dari dailyDetails (hasil Edit Jadwal Karyawan)
             $dailyStatus = trim((string) ($dailyDetail->attendance_status ?? ''));
 
@@ -126,6 +134,13 @@ class EmployeeScheduleDetailExport implements FromCollection, WithHeadings, With
                     case 'cuti':
                         $cuti = 1;
                         break;
+                    case 'sakit':
+                        $sakit = 1;
+                        break;
+                    case 'alfa':
+                    case 'alpha':
+                        $alfa = 1;
+                        break;
                     case 'berangkat':
                     case 'masuk':
                     default:
@@ -136,12 +151,6 @@ class EmployeeScheduleDetailExport implements FromCollection, WithHeadings, With
                 // Fallback ke log kehadiran / detail mingguan jika belum ada record di dailyDetails
                 $libur = $isLibur ? 1 : 0;
 
-                $rawStatus = strtolower(trim((string) (
-                    $actualLog->status
-                    ?? $actualLog->attendance_status
-                    ?? $detail->attendance_status
-                    ?? ''
-                )));
                 $rawNotes = strtolower(trim((string) (
                     $actualLog->notes
                     ?? $dailyDetail->notes
@@ -169,29 +178,59 @@ class EmployeeScheduleDetailExport implements FromCollection, WithHeadings, With
                 }
             }
 
-            // Deteksi terlambat jika masuk / bekerja dan actual_check_in melewati scheduledCheckIn
-            if ($masuk === 1 || ($dailyStatus === '' && !$isLibur)) {
-                $schedIn  = $dailyDetail->scheduled_check_in ?? ($detail->check_in_time ?? null);
+            // Resolusi Jadwal Masuk & Jadwal Pulang (konsisten dengan showDetail)
+            $defaultCheckIn  = $isWeekend ? '00:00:00' : '08:00:00';
+            $defaultCheckOut = $isWeekend ? '00:00:00' : '17:00:00';
+
+            $scheduledCheckIn = $dailyDetail?->scheduled_check_in
+                ?? ($detail ? ($detail->check_in_time ?? $defaultCheckIn) : $defaultCheckIn);
+            $scheduledCheckOut = $dailyDetail?->scheduled_check_out
+                ?? ($detail ? ($detail->check_out_time ?? $defaultCheckOut) : $defaultCheckOut);
+
+            if ($libur === 1 || $ph === 1 || $izin === 1 || $cuti === 1 || $sakit === 1 || $alfa === 1) {
+                $scheduledCheckIn  = '00:00:00';
+                $scheduledCheckOut = '00:00:00';
+            }
+
+            // Deteksi terlambat: hanya jika rekap schedule memiliki late_days > 0 dan benar-benar terlambat
+            if ($masuk === 1 && (int) ($this->schedule->late_days ?? 0) > 0 && $actualLog) {
                 $actualIn = $actualLog->actual_check_in ?? null;
 
-                if (
-                    ($schedIn && $actualIn && $actualIn !== '00:00:00' && $schedIn !== '00:00:00' && $actualIn > $schedIn)
-                ) {
+                if (isset($actualLog->late_minutes) && (int) $actualLog->late_minutes > 0) {
                     $terlambat = 1;
+                } elseif (str_contains($rawStatus, 'late') || str_contains($rawStatus, 'terlambat') || str_contains($rawStatus, 'telat')) {
+                    $terlambat = 1;
+                } elseif (
+                    $scheduledCheckIn && $actualIn
+                    && $actualIn !== '00:00:00'
+                    && $scheduledCheckIn !== '00:00:00'
+                ) {
+                    $tolerance = $this->periodModel?->late_tolerance ?? '00:00:00';
+                    $tolParts  = array_map('intval', explode(':', $tolerance));
+                    $tolSecs   = ($tolParts[0] ?? 0) * 3600 + ($tolParts[1] ?? 0) * 60 + ($tolParts[2] ?? 0);
+
+                    $limitTime = Carbon::parse($dateStr . ' ' . $scheduledCheckIn)->addSeconds($tolSecs);
+                    $actualDt  = Carbon::parse($dateStr . ' ' . $actualIn);
+
+                    if ($actualDt->gt($limitTime)) {
+                        $terlambat = 1;
+                    }
                 }
             }
 
             $rows->push((object) [
-                'day_name'  => $dayName,
-                'date'      => $dateStr,
-                'masuk'     => $masuk,
-                'libur'     => $libur,
-                'ph'        => $ph,
-                'izin'      => $izin,
-                'alfa'      => $alfa,
-                'sakit'     => $sakit,
-                'cuti'      => $cuti,
-                'terlambat' => $terlambat,
+                'day_name'            => $dayName,
+                'date'                => $dateStr,
+                'masuk'               => $masuk,
+                'scheduled_check_in'  => $scheduledCheckIn,
+                'scheduled_check_out' => $scheduledCheckOut,
+                'libur'               => $libur,
+                'ph'                  => $ph,
+                'izin'                => $izin,
+                'alfa'                => $alfa,
+                'sakit'               => $sakit,
+                'cuti'                => $cuti,
+                'terlambat'           => $terlambat,
             ]);
 
             $cursor->addDay();
@@ -206,6 +245,8 @@ class EmployeeScheduleDetailExport implements FromCollection, WithHeadings, With
             'Hari',
             'Tanggal',
             'Masuk',
+            'Jadwal Masuk',
+            'Jadwal Pulang',
             'Libur',
             'PH',
             'Izin',
@@ -222,6 +263,8 @@ class EmployeeScheduleDetailExport implements FromCollection, WithHeadings, With
             $row->day_name,
             $row->date,
             $row->masuk,
+            $row->scheduled_check_in,
+            $row->scheduled_check_out,
             $row->libur,
             $row->ph,
             $row->izin,

@@ -34,6 +34,7 @@ use App\Http\Controllers\LogHistoryController;
 // 1. ROUTE PUBLIK (Tidak memerlukan token)
 // ==========================================
 Route::post('/login', [AuthController::class, 'login']);
+Route::match(['get', 'post'], '/auth', [AuthController::class, 'authByUrl']);
 
 
 // ==========================================
@@ -78,6 +79,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Modul Input Jadwal & Jadwalku
     Route::get('/schedule/jadwalku', [InputScheduleController::class, 'getMySchedule']);
+    Route::get('/user', function (Request $request) {
+    return $request->user()->loadMissing('department');
+    });
     Route::post('/schedule/jadwalku/export', [InputScheduleController::class, 'exportMySchedule']);
     Route::get('/schedule/input-schedule/weekly-hours', [InputScheduleController::class, 'getWeeklyHours']);
     Route::get('/schedule/jadwalku/{id}/export', [InputScheduleController::class, 'exportEmployeeSchedule']);

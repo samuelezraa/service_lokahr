@@ -14,7 +14,7 @@ class EmployeeAttendanceController extends Controller
         $search  = $request->query('search');
         $dept    = $request->query('dept');
         $subDept = $request->query('sub_dept');
-        $perPage = (int) $request->input('per_page', 10);
+        $perPage = (int) $request->input('per_page', 25);
 
         $query = EmployeeAttendance::query();
 

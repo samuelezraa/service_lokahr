@@ -15,7 +15,7 @@ class EmployeePresenceReportController extends Controller
     /**
      * GET /api/reports/employee-presence
      */
-    public function index(Request $request)
+   public function index(Request $request)
     {
         $search    = $request->input('search');
         $startDate = $request->input('start_date');
@@ -53,40 +53,42 @@ class EmployeePresenceReportController extends Controller
             }
         };
 
+        // Helper closure untuk mencocokkan log kehadiran milik suatu departemen
+        $applyDeptFilter = function ($q, $dept) {
+            $q->where(function ($sub) use ($dept) {
+                $sub->where('department_id', $dept->id)
+                    ->orWhere('department_name', $dept->name)
+                    ->orWhereHas('employee', function ($empQ) use ($dept) {
+                        $empQ->where('department_id', $dept->id);
+                    });
+            });
+        };
+
         $query = Department::query();
 
-        // 2. Search Global (Nama Departemen)
         if (!empty($search)) {
             $query->where('name', 'like', "%{$search}%");
         }
 
-        // 3. Filter Departemen yang memiliki log kehadiran pada periode/tanggal terpilih
-        if ($isDateFiltered) {
-            $query->whereHas('employees.attendanceLogDetails', function ($q) use ($applyDateFilter) {
+        // Konsisten: selalu hanya tampilkan departemen yang memiliki data log kehadiran
+        $query->whereHas('employees.attendanceLogDetails', function ($q) use ($isDateFiltered, $applyDateFilter) {
+            if ($isDateFiltered) {
                 $applyDateFilter($q);
-            });
-        }
+            }
+        });
 
         $paginated = $query->paginate($perPage);
-// 4. Mapping data & kalkulasi total pax (jumlah karyawan unik berdasarkan NIP)
-        $mappedItems = collect($paginated->items())->map(function ($dept) use ($isDateFiltered, $applyDateFilter) {
-            $paxQuery = AttendanceLogDetail::where(function ($q) use ($dept) {
-                $q->where('department_id', $dept->id)
-                  ->orWhere('department_name', $dept->name)
-                  ->orWhereHas('employee', function ($empQ) use ($dept) {
-                      $empQ->where('department_id', $dept->id);
-                  });
-            });
+
+        // 4. Mapping data & kalkulasi total pax murni dari AttendanceLogDetail
+        $mappedItems = collect($paginated->items())->map(function ($dept) use ($isDateFiltered, $applyDateFilter, $applyDeptFilter) {
+            $paxQuery = AttendanceLogDetail::query();
+            $applyDeptFilter($paxQuery, $dept);
 
             if ($isDateFiltered) {
                 $applyDateFilter($paxQuery);
-                $totalPax = $paxQuery->distinct('nip')->count('nip');
-            } else {
-                $totalPax = $paxQuery->distinct('nip')->count('nip');
-                if ($totalPax === 0) {
-                    $totalPax = $dept->employees()->where('is_active', true)->count();
-                }
             }
+
+            $totalPax = $paxQuery->distinct('nip')->count('nip');
 
             return [
                 'id'         => (string) $dept->id,
@@ -100,28 +102,21 @@ class EmployeePresenceReportController extends Controller
         if (!empty($search)) {
             $grandTotalQuery->where('name', 'like', "%{$search}%");
         }
-        if ($isDateFiltered) {
-            $grandTotalQuery->whereHas('employees.attendanceLogDetails', function ($q) use ($applyDateFilter) {
+        $grandTotalQuery->whereHas('employees.attendanceLogDetails', function ($q) use ($isDateFiltered, $applyDateFilter) {
+            if ($isDateFiltered) {
                 $applyDateFilter($q);
-            });
-        }
+            }
+        });
 
-        $grandTotalPax = $grandTotalQuery->get()->sum(function ($dept) use ($isDateFiltered, $applyDateFilter) {
-            $paxQuery = AttendanceLogDetail::where(function ($q) use ($dept) {
-                $q->where('department_id', $dept->id)
-                  ->orWhere('department_name', $dept->name)
-                  ->orWhereHas('employee', function ($empQ) use ($dept) {
-                      $empQ->where('department_id', $dept->id);
-                  });
-            });
+        $grandTotalPax = $grandTotalQuery->get()->sum(function ($dept) use ($isDateFiltered, $applyDateFilter, $applyDeptFilter) {
+            $paxQuery = AttendanceLogDetail::query();
+            $applyDeptFilter($paxQuery, $dept);
 
             if ($isDateFiltered) {
                 $applyDateFilter($paxQuery);
-                return $paxQuery->distinct('nip')->count('nip');
             }
 
-            $cnt = $paxQuery->distinct('nip')->count('nip');
-            return $cnt === 0 ? $dept->employees()->where('is_active', true)->count() : $cnt;
+            return $paxQuery->distinct('nip')->count('nip');
         });
 
         return response()->json([

@@ -15,11 +15,18 @@ class CheckIsHr
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $user = $request->user();
+        $user = $request->user()?->loadMissing('department');
 
-        // Sesuaikan pengecekan role atau department user sesuai struktur database Anda
-        if ($user && ($user->role === 'HR' || $user->department === 'HR' || $user->is_hr === true)) {
-            return $next($request);
+        if ($user) {
+            $deptCode = strtoupper(trim((string) ($user->department?->code ?? '')));
+            $deptName = strtolower(trim((string) ($user->department?->name ?? $user->getRawOriginal('department') ?? '')));
+
+            $isHrDepartment = $deptCode === 'DP002'
+                || in_array($deptName, ['hr', 'hrd', 'hr management', 'human resource', 'human resources'], true);
+
+            if ($isHrDepartment || $user->is_hr === true || strtoupper((string) $user->role) === 'HR') {
+                return $next($request);
+            }
         }
 
         return response()->json([

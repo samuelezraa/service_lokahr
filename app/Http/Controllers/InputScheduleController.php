@@ -158,7 +158,7 @@ class InputScheduleController extends Controller
             'totalLateDays'   => (int) $summaryQuery->sum('late_days'),
         ];
 
-        $perPage = (int) $request->input('per_page', 10);
+        $perPage = (int) $request->input('per_page', 25);
         $paginated = $query->latest()->paginate($perPage);
 
         $mappedItems = collect($paginated->items())->map(function ($sch) {
@@ -200,6 +200,7 @@ class InputScheduleController extends Controller
         ]);
     }
 
+    
     /**
      * GET /api/schedule/input-schedule/weekly-hours
      */
@@ -526,7 +527,9 @@ public function downloadSample(Request $request)
     );
 }
 
-    /**
+    
+
+/**
      * 8. GET /api/schedule/jadwalku
      */
     public function getMySchedule(Request $request)
@@ -534,7 +537,11 @@ public function downloadSample(Request $request)
         $defaultPeriod = Period::where('is_active', true)->orderBy('start_date')->value('code') ?? '220001';
         $period = $request->query('period', $defaultPeriod);
 
-        $query = Schedule::with(['employee.department', 'employee.subDepartment', 'employee.grade'])
+        if (!empty($period)) {
+            $this->syncEmployeesForPeriod((string) $period);
+        }
+
+        $query = Schedule::with(['employee.department', 'employee.subDepartment', 'employee.grade', 'dailyDetails'])
             ->where('period_code', $period);
 
         if ($request->has('search') && !empty($request->search)) {
@@ -550,9 +557,16 @@ public function downloadSample(Request $request)
             });
         }
 
-        $deptVal = $request->query('department_id', $request->query('dept'));
-        if (!empty($deptVal)) {
-            $query->where('department_id', $deptVal);
+        $requestedDept = $request->query('department_id', $request->query('dept'));
+        $effectiveDeptId = $this->resolveEffectiveDepartmentId($request, $requestedDept);
+
+        if (!empty($effectiveDeptId)) {
+            $query->where(function ($q) use ($effectiveDeptId) {
+                $q->where('department_id', $effectiveDeptId)
+                  ->orWhereHas('employee', function ($empQ) use ($effectiveDeptId) {
+                      $empQ->where('department_id', $effectiveDeptId);
+                  });
+            });
         }
 
         if ($request->has('sub_department') && !empty($request->sub_department)) {
@@ -576,25 +590,43 @@ public function downloadSample(Request $request)
         $paginated = $query->latest()->paginate($perPage);
 
         $mappedItems = collect($paginated->items())->map(function ($sch) use ($period) {
+            $daily = $sch->dailyDetails ?? collect();
+
+            if ($daily->count() > 0) {
+                $offDays    = $daily->where('attendance_status', 'Libur')->count();
+                $phDays     = $daily->where('attendance_status', 'PH')->count();
+                $permitDays = $daily->where('attendance_status', 'Izin')->count();
+                $leaveDays  = $daily->where('attendance_status', 'Cuti')->count();
+                $workDays   = $daily->whereNotIn('attendance_status', ['Libur', 'PH', 'Izin', 'Cuti'])->count();
+                $totalDays  = $daily->count();
+            } else {
+                $offDays    = (int) $sch->off_days;
+                $phDays     = (int) $sch->ph_days;
+                $permitDays = (int) $sch->permit_days;
+                $leaveDays  = (int) $sch->leave_days;
+                $workDays   = (int) $sch->work_days;
+                $totalDays  = (int) $sch->total_days;
+            }
+
             return [
                 'id'             => (string) $sch->id,
                 'employee_id'    => $sch->employee?->employee_id ?? '-',
                 'period'         => $period,
                 'nip'            => $sch->employee?->nip ?? $sch->nip ?? '-',
                 'name'           => $sch->employee?->full_name ?? $sch->employee_name ?? '-',
-                'department_id'  => $sch->department_id,
-                'department'     => $sch->department_name ?? $sch->department?->name ?? '-',
+                'department_id'  => $sch->department_id ?? $sch->employee?->department_id,
+                'department'     => $sch->department_name ?? $sch->department?->name ?? $sch->employee?->department?->name ?? '-',
                 'sub_department' => $sch->sub_department_name ?? $sch->subDepartment?->name ?? '-',
                 'grade'          => $sch->employee?->grade?->name ?? 'Officer',
-                'off_days'       => (int) $sch->off_days,
-                'ph_days'        => (int) $sch->ph_days,
-                'permit_days'    => (int) $sch->permit_days,
+                'off_days'       => $offDays,
+                'ph_days'        => $phDays,
+                'permit_days'    => $permitDays,
                 'alpha_days'     => (int) $sch->alpha_days,
                 'sick_days'      => 0,
-                'leave_days'     => (int) $sch->leave_days,
+                'leave_days'     => $leaveDays,
                 'late_days'      => (int) $sch->late_days,
-                'work_days'      => (int) $sch->work_days,
-                'total_days'     => (int) $sch->total_days,
+                'work_days'      => $workDays,
+                'total_days'     => $totalDays,
             ];
         });
 
@@ -608,10 +640,11 @@ public function downloadSample(Request $request)
                 'per_page'     => $paginated->perPage(),
                 'to'           => $paginated->lastItem(),
                 'total'        => $paginated->total(),
-            ]
+            ],
         ]);
     }
 
+    
     /**
      * 9. POST /api/schedule/jadwalku/export
      */
@@ -621,7 +654,8 @@ public function downloadSample(Request $request)
         $period        = $request->input('period', $defaultPeriod);
         $selectedIds   = $request->input('ids', []);
         $search        = $request->input('search');
-        $departmentId  = $request->input('department_id', $request->input('dept'));
+        $requestedDept = $request->input('department_id', $request->input('dept'));
+        $departmentId  = $this->resolveEffectiveDepartmentId($request, $requestedDept);
         $subDepartment = $request->input('sub_department');
         $grade         = $request->input('grade');
 
@@ -639,6 +673,7 @@ public function downloadSample(Request $request)
             $fileName
         );
     }
+
 
     /**
      * 10. GET /api/schedule/jadwalku/{id}/export
@@ -664,4 +699,42 @@ public function downloadSample(Request $request)
             $fileName
         );
     }
+
+
+
+  private function isHrUser($user): bool
+    {
+        if (!$user) {
+            return false;
+        }
+
+        $user->loadMissing('department');
+        $deptRelation = $user->getRelationValue('department');
+
+        $deptCode = strtoupper(trim((string) (is_object($deptRelation) ? ($deptRelation->code ?? '') : '')));
+        $deptName = strtolower(trim((string) (
+            is_object($deptRelation)
+                ? ($deptRelation->name ?? '')
+                : ($user->getRawOriginal('department') ?? '')
+        )));
+
+        return $deptCode === 'DP002'
+            || in_array($deptName, ['hr', 'hrd', 'hr management', 'human resource', 'human resources'], true)
+            || (bool) ($user->is_hr ?? false);
+    }
+
+    private function resolveEffectiveDepartmentId(Request $request, $requestedDeptId = null): ?string
+    {
+        $user = $request->user();
+
+        if (!$this->isHrUser($user)) {
+            $userDeptId = $user?->department_id;
+            return $userDeptId !== null && $userDeptId !== '' ? (string) $userDeptId : '-1';
+        }
+
+        return $requestedDeptId !== null && $requestedDeptId !== '' ? (string) $requestedDeptId : null;
+    }
+
+
+  
 }

@@ -28,8 +28,8 @@ class DepartmentController extends Controller
             }
         }
 
-        $perPage = (int) $request->input('per_page', 10);
-        $perPage = $perPage > 0 ? min($perPage, 100) : 10;
+        $perPage = (int) $request->input('per_page', 25);
+        $perPage = $perPage > 0 ? min($perPage, 100) : 25;
 
         $departments = $query->latest()->paginate($perPage);
 
